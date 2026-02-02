@@ -1,0 +1,41 @@
+{
+  "name": "car-inspection-serverless",
+  "version": "1.0.0",
+  "description": "Car Inspection Management System - Serverless API",
+  "main": "index.js",
+  "scripts": {
+    "dev": "serverless offline",
+    "init-db": "node scripts/init-db.js",
+    "deploy": "serverless deploy",
+    "deploy:dev": "serverless deploy --stage dev",
+    "deploy:prod": "serverless deploy --stage prod",
+    "test": "jest",
+    "lint": "eslint .",
+    "format": "prettier --write \"**/*.{js,json,md}\"",
+    "swagger": "npx http-server . -p 8080 -o swagger.html",
+    "swagger:serve": "npx redoc-cli serve swagger.yaml --port 8080"
+  },
+  "keywords": [
+    "serverless",
+    "aws",
+    "lambda",
+    "car-inspection"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "nodemailer": "^6.10.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.1.1",
+    "serverless-offline": "^13.3.0"
+  }
+}

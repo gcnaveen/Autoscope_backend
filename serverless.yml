@@ -1,0 +1,191 @@
+service: car-inspection-api
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'dev'}
+  timeout: 29
+  memorySize: 512
+  
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    STAGE: ${self:provider.stage}
+    MONGODB_URI: ${env:MONGODB_URI, 'mongodb://localhost:27017/car_inspection_db'}
+    JWT_SECRET: ${env:JWT_SECRET, 'your-super-secret-jwt-key-change-in-production'}
+    JWT_EXPIRES_IN: ${env:JWT_EXPIRES_IN, '24h'}
+
+  httpApi:
+    cors: true
+
+functions:
+  # Auth endpoints grouped into ONE lambda
+  authApi:
+    handler: src/handlers/authApi.handler
+    events:
+      - httpApi:
+          path: /api/auth/register
+          method: POST
+      - httpApi:
+          path: /api/auth/login
+          method: POST
+      - httpApi:
+          path: /api/auth/send-otp
+          method: POST
+      - httpApi:
+          path: /api/auth/verify-otp
+          method: POST
+
+  # User endpoints grouped into ONE lambda
+  usersApi:
+    handler: src/handlers/usersApi.handler
+    events:
+      - httpApi:
+          path: /api/users
+          method: GET
+      - httpApi:
+          path: /api/users
+          method: POST
+      - httpApi:
+          path: /api/users/{id}
+          method: GET
+      - httpApi:
+          path: /api/users/{id}
+          method: PUT
+      - httpApi:
+          path: /api/users/{id}
+          method: DELETE
+      - httpApi:
+          path: /api/users/{id}/block
+          method: PUT
+      - httpApi:
+          path: /api/inspectors/available
+          method: GET
+      - httpApi:
+          path: /api/inspectors/me/available-status
+          method: PUT
+
+  # Checklist endpoints grouped into ONE lambda
+  checklistApi:
+    handler: src/handlers/checklistApi.handler
+    events:
+      # Template routes (admin)
+      - httpApi:
+          path: /api/checklists/templates
+          method: POST
+      - httpApi:
+          path: /api/checklists/templates
+          method: GET
+      - httpApi:
+          path: /api/checklists/templates/{id}
+          method: GET
+      - httpApi:
+          path: /api/checklists/templates/{id}
+          method: PUT
+      - httpApi:
+          path: /api/checklists/templates/{id}
+          method: DELETE
+      # Active templates (inspector)
+      - httpApi:
+          path: /api/checklists/templates/active
+          method: GET
+      # Inspection routes
+      - httpApi:
+          path: /api/checklists/inspections
+          method: POST
+      - httpApi:
+          path: /api/checklists/inspections
+          method: GET
+      - httpApi:
+          path: /api/checklists/inspections/{id}
+          method: GET
+      - httpApi:
+          path: /api/checklists/inspections/{id}
+          method: PUT
+      - httpApi:
+          path: /api/checklists/inspections/{id}
+          method: DELETE
+
+  # Admin Dashboard endpoint
+  statisticsApi:
+    handler: src/handlers/statisticsApi.handler
+    events:
+      - httpApi:
+          path: /api/admin/dashboard
+          method: GET
+
+  # Inspection Request endpoints grouped into ONE lambda
+  inspectionRequestApi:
+    handler: src/handlers/inspectionRequestApi.handler
+    events:
+      - httpApi:
+          path: /api/inspection-requests
+          method: POST
+      - httpApi:
+          path: /api/inspection-requests
+          method: GET
+      - httpApi:
+          path: /api/inspection-requests/me
+          method: GET
+      - httpApi:
+          path: /api/inspection-requests/inspector/assigned
+          method: GET
+      - httpApi:
+          path: /api/inspection-requests/{id}
+          method: GET
+      - httpApi:
+          path: /api/inspection-requests/{id}
+          method: PUT
+      - httpApi:
+          path: /api/inspection-requests/{id}/assign
+          method: PUT
+      - httpApi:
+          path: /api/inspection-requests/{id}/approve
+          method: PUT
+      - httpApi:
+          path: /api/inspection-requests/{id}/reject
+          method: PUT
+      - httpApi:
+          path: /api/inspection-requests/admin/all
+          method: GET
+
+  # Contact Us
+  contactApi:
+    handler: src/handlers/contactApi.handler
+    events:
+      - httpApi:
+          path: /api/contact
+          method: POST
+      - httpApi:
+          path: /api/contact/admin
+          method: GET
+
+  # Swagger Documentation endpoints
+  swaggerApi:
+    handler: src/handlers/swaggerApi.handler
+    events:
+      - httpApi:
+          path: /api/docs
+          method: GET
+      - httpApi:
+          path: /api/docs/swagger.yaml
+          method: GET
+      - httpApi:
+          path: /api/docs
+          method: OPTIONS
+      - httpApi:
+          path: /api/docs/swagger.yaml
+          method: OPTIONS
+
+plugins:
+  - serverless-offline
+
+package:
+  patterns:
+    - '!node_modules/.cache/**'
+    - '!*.md'
+    - '!.git/**'
+    - '!.env*'
+    - '!tests/**'
+    - 'swagger.yaml'
+    - 'swagger.html'

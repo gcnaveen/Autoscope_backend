@@ -1,0 +1,2515 @@
+openapi: 3.0.3
+info:
+  title: Car Inspection API
+  description: |
+    Production-level serverless API for car inspection management system.
+    
+    **Authentication**: All endpoints (except register/login) require JWT authentication via Bearer token.
+    
+    **Login by role**:
+    - **Admin & Inspector**: Email + password login. No OTP. Register/create with password (min 8 chars).
+    - **User**: OTP-only login. Register with email only; OTP sent to email; verify OTP to get JWT. No password.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:3000
+    description: Local Development Server
+  - url: https://{api-gateway-url}.amazonaws.com
+    description: Production Server
+    variables:
+      api-gateway-url:
+        default: 6k651yup6b.execute-api.ap-south-1.amazonaws.com
+
+tags:
+  - name: Authentication
+    description: OTP-based authentication endpoints
+  - name: Users
+    description: User management endpoints (Admin only)
+  - name: Checklist Templates
+    description: Checklist template management (Admin only)
+  - name: Inspections
+    description: Inspection creation and management (Inspector)
+  - name: Inspection Requests
+    description: Inspection request management
+  - name: Admin Dashboard
+    description: Admin dashboard statistics
+  - name: Contact
+    description: Contact us form (public)
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ============================================
+  # Authentication Endpoints
+  # ============================================
+  /api/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: |
+        **Admin/Inspector**: Provide email, password (min 8 chars), name, role. Account is active; returns JWT. No OTP.
+        **User**: Provide email, name, role=user (no password). OTP sent to email; verify via /api/auth/verify-otp to get JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully, OTP sent to email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login
+      description: |
+        **Admin/Inspector**: Send email + password. Returns JWT (no OTP).
+        **User**: Send email only. OTP sent to email; verify via /api/auth/verify-otp to get JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OTP sent to email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/send-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Send OTP to email (user role only)
+      description: Send or resend OTP to user's email. **Only for user role** (OTP-based accounts). Admin/inspector must use email+password login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendOtpRequest'
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendOtpResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/auth/verify-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify OTP and get JWT (user role only)
+      description: Verify OTP code and receive JWT. **Only for user role**. Admin/inspector use email+password login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyOtpRequest'
+      responses:
+        '200':
+          description: OTP verified successfully, JWT token returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyOtpResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # Contact Us (public)
+  # ============================================
+  /api/contact:
+    post:
+      tags:
+        - Contact
+      summary: Submit contact us form
+      description: |
+        Submit a contact form. **Either email or number is required** (user can enter any one).
+        Message is optional. No authentication required.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactUsRequest'
+      responses:
+        '201':
+          description: Contact form submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactUsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/contact/admin:
+    get:
+      tags:
+        - Contact
+      summary: Get all contact submissions (Admin only)
+      description: Get paginated list of contact form submissions. Requires admin JWT.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [createdAt, name, email]
+            default: createdAt
+        - name: sortOrder
+          in: query
+          description: Sort order
+          schema:
+            type: string
+            enum: [ASC, DESC]
+            default: DESC
+      responses:
+        '200':
+          description: Contact submissions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactSubmissionsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # User Management Endpoints
+  # ============================================
+  /api/users:
+    get:
+      tags:
+        - Users
+      summary: Get all users (Admin only)
+      description: |
+        Get paginated list of users with search, filtering, and sorting.
+        Admin users are excluded by default. To see admin users, explicitly filter by role=admin.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Search'
+        - name: role
+          in: query
+          description: Filter by role
+          schema:
+            type: string
+            enum: [admin, inspector, user]
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [active, blocked, inactive]
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Users
+      summary: Create user (Admin only)
+      description: |
+        Create a new user. **Admin/Inspector**: require password (min 8 chars); account is active. **User**: no password; account inactive until OTP verified on first login.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/users/{id}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Get user details. Users can only view their own profile, admins can view any.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Users
+      summary: Update user
+      description: Update user details. Users can only update themselves, admins can update anyone.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Users
+      summary: Delete user (Admin only)
+      description: Delete a user permanently.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/users/{id}/block:
+    put:
+      tags:
+        - Users
+      summary: Toggle user status (Admin only)
+      description: Toggle user status between active and inactive. If user is active, sets to inactive; if inactive or blocked, sets to active.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User status toggled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspectors/available:
+    get:
+      tags:
+        - Users
+      summary: Get available inspectors (Admin only)
+      description: |
+        List inspectors who are available for assignment: **role=inspector**, **status=active**, **is_assigned=false**.
+        Optionally filter by **availableStatus**. Use this before assigning an inspector to a request.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: limit
+          in: query
+          description: Items per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: availableStatus
+          in: query
+          description: Filter by inspector available status
+          schema:
+            type: string
+            maxLength: 50
+      responses:
+        '200':
+          description: Available inspectors retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableInspectorsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/inspectors/me/available-status:
+    put:
+      tags:
+        - Users
+      summary: Update inspector's available status (Inspector only)
+      description: Update the **current inspector's** availableStatus (e.g. available, busy, on leave). Max 50 characters. Inspector-only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAvailableStatusRequest'
+      responses:
+        '200':
+          description: Available status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectorProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # Checklist Template Endpoints
+  # ============================================
+  /api/checklists/templates:
+    post:
+      tags:
+        - Checklist Templates
+      summary: Create checklist template (Admin only)
+      description: Create a new checklist template for inspections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags:
+        - Checklist Templates
+      summary: Get all templates (Admin only)
+      description: Get paginated list of checklist templates.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: search
+          in: query
+          description: Search in name and description
+          schema:
+            type: string
+        - name: isActive
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/SortBy'
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Templates retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplatesListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/checklists/templates/{id}:
+    get:
+      tags:
+        - Checklist Templates
+      summary: Get template by ID
+      description: Get checklist template details. Inspectors only see active templates.
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: Template retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Checklist Templates
+      summary: Update template (Admin only)
+      description: Update checklist template. Version increments automatically when types are updated.
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Checklist Templates
+      summary: Delete template (Admin only)
+      description: Delete checklist template. Cannot delete templates used in inspections.
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: Template deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/checklists/templates/active:
+    get:
+      tags:
+        - Checklist Templates
+      summary: Get active templates (Inspector)
+      description: Get all active checklist templates for inspectors.
+      responses:
+        '200':
+          description: Active templates retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveTemplatesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================
+  # Inspection Endpoints
+  # ============================================
+  /api/checklists/inspections:
+    post:
+      tags:
+        - Inspections
+      summary: Create inspection (Inspector only)
+      description: Create a new inspection based on a checklist template.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInspectionRequest'
+      responses:
+        '201':
+          description: Inspection created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags:
+        - Inspections
+      summary: Get all inspections
+      description: Get paginated list of inspections. Inspectors see only their own, admins see all.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [draft, completed, submitted]
+        - name: templateId
+          in: query
+          description: Filter by template ID
+          schema:
+            type: string
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [id, inspectionDate, createdAt, overallRating]
+            default: inspectionDate
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Inspections retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/checklists/inspections/{id}:
+    get:
+      tags:
+        - Inspections
+      summary: Get inspection by ID
+      description: Get inspection details. Only inspector who created it or admin can view.
+      parameters:
+        - $ref: '#/components/parameters/InspectionId'
+      responses:
+        '200':
+          description: Inspection retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Inspections
+      summary: Update inspection (Inspector only)
+      description: Update inspection. Only draft inspections can be updated.
+      parameters:
+        - $ref: '#/components/parameters/InspectionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInspectionRequest'
+      responses:
+        '200':
+          description: Inspection updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Inspections
+      summary: Delete inspection (Inspector only)
+      description: Delete inspection. Only draft inspections can be deleted.
+      parameters:
+        - $ref: '#/components/parameters/InspectionId'
+      responses:
+        '200':
+          description: Inspection deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================
+  # Inspection Request Endpoints
+  # ============================================
+  /api/inspection-requests:
+    post:
+      tags:
+        - Inspection Requests
+      summary: Create inspection request (Public - No Auth Required)
+      description: |
+        Create a new inspection request. **This is a public endpoint - no authentication required.**
+        
+        **Auto-User Creation**: 
+        - If the email exists in the database, the request is mapped to that user.
+        - If the email doesn't exist, a new user is automatically created with:
+          - Role: `user`
+          - Status: `inactive` (until OTP verification)
+          - Email: provided email
+          - firstName/lastName/phone: from request if provided, otherwise defaults
+        
+        **User Updates**: If user exists but firstName/lastName/phone are missing, they will be updated from the request.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInspectionRequestRequest'
+      responses:
+        '201':
+          description: Inspection request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    get:
+      tags:
+        - Inspection Requests
+      summary: Get user's inspection requests
+      description: Get paginated list of inspection requests. Users see only their own, admins see all.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, assigned, in_progress, completed, cancelled]
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [id, createdAt, preferredDate, status]
+            default: createdAt
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Inspection requests retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/inspection-requests/me:
+    get:
+      tags:
+        - Inspection Requests
+      summary: Get logged-in user's inspection requests (my requests)
+      description: Returns the inspection requests for the currently authenticated user. Same query params and response as GET /api/inspection-requests; use this path when you explicitly want "my requests".
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, assigned, in_progress, completed, cancelled]
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [id, createdAt, preferredDate, status]
+            default: createdAt
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Inspection requests retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/inspection-requests/inspector/assigned:
+    get:
+      tags:
+        - Inspection Requests
+      summary: Get assigned requests (Inspector only)
+      description: Get paginated list of inspection requests **assigned to the current inspector**. Inspector-only.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, assigned, in_progress, completed, cancelled]
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [id, createdAt, preferredDate, status]
+            default: createdAt
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Assigned requests retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/inspection-requests/{id}:
+    get:
+      tags:
+        - Inspection Requests
+      summary: Get inspection request by ID
+      description: Get inspection request details. Owner (userId), assigned inspector, or admin can view.
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      responses:
+        '200':
+          description: Inspection request retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Inspection Requests
+      summary: Update inspection request (user edits own request)
+      description: |
+        Update an inspection request. User can only edit **their own** request and **only when status is pending**.
+        Admin can edit any request when pending. Allowed fields: requestType, vehicleInfo, preferredDate, preferredTime, location, notes. At least one field required.
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInspectionRequestRequest'
+      responses:
+        '200':
+          description: Inspection request updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspection-requests/{id}/assign:
+    put:
+      tags:
+        - Inspection Requests
+      summary: Assign inspector to request (Admin only)
+      description: |
+        Assign an inspector to a **pending** inspection request. Inspector must exist, have role=inspector, be active, and **is_assigned=false**.
+        On success, request status becomes **assigned** and inspector's **is_assigned** is set to true.
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignInspectorRequest'
+      responses:
+        '200':
+          description: Inspector assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspection-requests/{id}/approve:
+    put:
+      tags:
+        - Inspection Requests
+      summary: Approve inspection request (Admin only)
+      description: Approve a **pending** inspection request. Sets adminApprovedAt. Request must be pending.
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      responses:
+        '200':
+          description: Inspection request approved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspection-requests/{id}/reject:
+    put:
+      tags:
+        - Inspection Requests
+      summary: Reject inspection request (Admin only)
+      description: Reject an inspection request. Sets status to **cancelled**, cancelledAt, cancelledReason. If an inspector was assigned, they are unassigned (is_assigned=false).
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectInspectionRequestRequest'
+      responses:
+        '200':
+          description: Inspection request rejected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspection-requests/admin/all:
+    get:
+      tags:
+        - Inspection Requests
+      summary: Get all inspection requests (Admin only)
+      description: Get paginated list of all inspection requests with statistics.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, assigned, in_progress, completed, cancelled]
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [id, createdAt, preferredDate, status]
+            default: createdAt
+        - $ref: '#/components/parameters/SortOrder'
+      responses:
+        '200':
+          description: Inspection requests retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminInspectionRequestsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # Admin Dashboard Endpoint
+  # ============================================
+  /api/admin/dashboard:
+    get:
+      tags:
+        - Admin Dashboard
+      summary: Get admin dashboard data
+      description: Get comprehensive dashboard statistics and recent activities.
+      responses:
+        '200':
+          description: Dashboard data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDashboardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT from /api/auth/login (admin/inspector) or /api/auth/verify-otp (user)
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    Limit:
+      name: limit
+      in: query
+      description: Items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+
+    Search:
+      name: search
+      in: query
+      description: Search query
+      schema:
+        type: string
+        maxLength: 100
+
+    SortBy:
+      name: sortBy
+      in: query
+      description: Sort field
+      schema:
+        type: string
+        default: id
+
+    SortOrder:
+      name: sortOrder
+      in: query
+      description: Sort order
+      schema:
+        type: string
+        enum: [ASC, DESC]
+        default: DESC
+
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User ID
+      schema:
+        type: string
+
+    TemplateId:
+      name: id
+      in: path
+      required: true
+      description: Template ID
+      schema:
+        type: string
+
+    InspectionId:
+      name: id
+      in: path
+      required: true
+      description: Inspection ID
+      schema:
+        type: string
+
+    InspectionRequestId:
+      name: id
+      in: path
+      required: true
+      description: Inspection Request ID
+      schema:
+        type: string
+
+  schemas:
+    # Authentication Schemas
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - firstName
+        - lastName
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        firstName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: John
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: Doe
+        phone:
+          type: string
+          maxLength: 20
+          example: "+1234567890"
+        role:
+          type: string
+          enum: [admin, inspector, user]
+          default: user
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: Required for admin and inspector roles
+          example: SecurePass123
+
+    RegisterResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 201
+        message:
+          type: string
+          example: User registered. OTP sent to email for verification
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+              nullable: true
+              example: null
+            otpRequired:
+              type: boolean
+              example: true
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          description: Required for admin and inspector; omit for user (OTP flow)
+          example: SecurePass123
+
+    LoginResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: OTP sent to email; verify to complete login
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+              nullable: true
+              example: null
+            otpRequired:
+              type: boolean
+              example: true
+
+    SendOtpRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+
+    SendOtpResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: OTP sent to email
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+              example: OTP sent to your email.
+
+    VerifyOtpRequest:
+      type: object
+      required:
+        - email
+        - otp
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+          example: "123456"
+
+    VerifyOtpResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: OTP verified successfully
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+              example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+    # Contact Us Schemas
+    ContactUsRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: John Doe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+          description: Either email or number is required
+        number:
+          type: string
+          maxLength: 20
+          example: "+1234567890"
+          description: Either email or number is required
+        message:
+          type: string
+          maxLength: 2000
+          example: I would like to know more about your services.
+          description: Optional
+
+    ContactUsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Thank you for contacting us. We will get back to you soon.
+        data:
+          type: object
+          properties:
+            submission:
+              type: object
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                email:
+                  type: string
+                  nullable: true
+                number:
+                  type: string
+                  nullable: true
+                message:
+                  type: string
+                  nullable: true
+
+    ContactSubmissionsListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Contact submissions retrieved successfully
+        data:
+          type: object
+          properties:
+            submissions:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+                    nullable: true
+                  number:
+                    type: string
+                    nullable: true
+                  message:
+                    type: string
+                    nullable: true
+                  createdAt:
+                    type: string
+                    format: date-time
+            pagination:
+              type: object
+              properties:
+                currentPage:
+                  type: integer
+                totalPages:
+                  type: integer
+                totalCount:
+                  type: integer
+                limit:
+                  type: integer
+                hasNextPage:
+                  type: boolean
+                hasPreviousPage:
+                  type: boolean
+            filters:
+              type: object
+              properties:
+                search:
+                  type: string
+                  nullable: true
+                sortBy:
+                  type: string
+                sortOrder:
+                  type: string
+
+    # User Schemas
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439011"
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        firstName:
+          type: string
+          example: John
+        lastName:
+          type: string
+          example: Doe
+        role:
+          type: string
+          enum: [admin, inspector, user]
+          example: user
+        status:
+          type: string
+          enum: [active, blocked, inactive]
+          example: active
+        phone:
+          type: string
+          nullable: true
+          example: "+1234567890"
+        availableStatus:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - firstName
+        - lastName
+        - role
+      properties:
+        email:
+          type: string
+          format: email
+          example: inspector@example.com
+        firstName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: Jane
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: Smith
+        phone:
+          type: string
+          maxLength: 20
+          example: "+1234567890"
+        role:
+          type: string
+          enum: [admin, inspector, user]
+          example: inspector
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: Required when role is admin or inspector
+          example: SecurePass123
+
+    CreateUserResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 201
+        message:
+          type: string
+          example: User created successfully
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+
+    UpdateUserRequest:
+      type: object
+      minProperties: 1
+      properties:
+        firstName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: John Updated
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          example: Doe Updated
+        phone:
+          type: string
+          maxLength: 20
+          example: "+9876543210"
+        role:
+          type: string
+          enum: [admin, inspector, user]
+          description: Only admin can change roles
+
+    UserResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: User retrieved successfully
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+
+    UsersListResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Users retrieved successfully
+        data:
+          type: object
+          properties:
+            users:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              $ref: '#/components/schemas/UserFilters'
+
+    UserFilters:
+      type: object
+      properties:
+        search:
+          type: string
+          nullable: true
+        role:
+          type: string
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        sortBy:
+          type: string
+        sortOrder:
+          type: string
+
+    AvailableInspector:
+      type: object
+      description: Inspector available for assignment (role=inspector, status=active, is_assigned=false)
+      properties:
+        id:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        availableStatus:
+          type: string
+          nullable: true
+        is_assigned:
+          type: boolean
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+
+    AvailableInspectorsResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Available inspectors retrieved successfully
+        data:
+          type: object
+          properties:
+            inspectors:
+              type: array
+              items:
+                $ref: '#/components/schemas/AvailableInspector'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+
+    UpdateAvailableStatusRequest:
+      type: object
+      description: Inspector updates own available status (max 50 chars)
+      properties:
+        availableStatus:
+          type: string
+          maxLength: 50
+          nullable: true
+          example: available
+
+    InspectorProfileResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Available status updated successfully
+        data:
+          type: object
+          properties:
+            user:
+              type: object
+              properties:
+                id: { type: string }
+                email: { type: string }
+                firstName: { type: string }
+                lastName: { type: string }
+                role: { type: string }
+                status: { type: string }
+                phone: { type: string, nullable: true }
+                availableStatus: { type: string, nullable: true }
+                is_assigned: { type: boolean }
+                createdAt: { type: string, format: date-time }
+                updatedAt: { type: string, format: date-time }
+
+    # Checklist Template Schemas
+    ChecklistItem:
+      type: object
+      required:
+        - position
+        - label
+        - isRequired
+      properties:
+        position:
+          type: integer
+          minimum: 1
+          example: 1
+        label:
+          type: string
+          maxLength: 200
+          example: Paint Condition
+        description:
+          type: string
+          maxLength: 500
+          example: Check for scratches, dents, and paint quality
+        isRequired:
+          type: boolean
+          example: true
+
+    TemplateType:
+      type: object
+      required:
+        - typeName
+        - checklistItems
+      properties:
+        typeName:
+          type: string
+          enum:
+            - Exterior
+            - Light Conditions and Operations
+            - Interior
+            - Engine
+            - Transmission and Drivetrain
+            - Chasis
+            - Tyre and Breaks
+            - Overall Safety Feature
+            - Entertainment
+            - Drive and Passenger Experience
+          example: Exterior
+        checklistItems:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChecklistItem'
+        allowOverallRemarks:
+          type: boolean
+          default: true
+        allowOverallPhotos:
+          type: boolean
+          default: true
+        allowVideos:
+          type: boolean
+          default: false
+          description: Only true for Interior and Exterior types
+        maxVideos:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 2
+
+    CreateTemplateRequest:
+      type: object
+      required:
+        - name
+        - types
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+          example: Standard Car Inspection Template
+        description:
+          type: string
+          maxLength: 500
+          example: Comprehensive inspection template for all vehicle types
+        types:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TemplateType'
+
+    UpdateTemplateRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        isActive:
+          type: boolean
+        types:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TemplateType'
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439020"
+        name:
+          type: string
+          example: Standard Car Inspection Template
+        description:
+          type: string
+          example: Comprehensive inspection template
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateType'
+        isActive:
+          type: boolean
+          example: true
+        version:
+          type: integer
+          example: 1
+        createdBy:
+          $ref: '#/components/schemas/User'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    TemplateResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            template:
+              $ref: '#/components/schemas/Template'
+
+    TemplatesListResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Templates retrieved successfully
+        data:
+          type: object
+          properties:
+            templates:
+              type: array
+              items:
+                $ref: '#/components/schemas/Template'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+
+    ActiveTemplatesResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Active templates retrieved successfully
+        data:
+          type: object
+          properties:
+            templates:
+              type: array
+              items:
+                $ref: '#/components/schemas/Template'
+
+    # Inspection Schemas
+    VehicleInfo:
+      type: object
+      required:
+        - make
+        - model
+        - year
+      properties:
+        make:
+          type: string
+          example: Toyota
+        model:
+          type: string
+          example: Camry
+        year:
+          type: integer
+          example: 2020
+        vin:
+          type: string
+          example: "4T1BF1FK5EU123456"
+        licensePlate:
+          type: string
+          example: ABC123
+        mileage:
+          type: integer
+          example: 50000
+        color:
+          type: string
+          example: Silver
+
+    ChecklistItemResponse:
+      type: object
+      required:
+        - position
+        - label
+        - status
+        - rating
+      properties:
+        position:
+          type: integer
+          example: 1
+        label:
+          type: string
+          example: Paint Condition
+        status:
+          type: string
+          enum: [Excellent, Good, Average, Poor]
+          example: Excellent
+        rating:
+          type: integer
+          enum: [4, 3, 2, 1]
+          description: Must match status (Excellent=4, Good=3, Average=2, Poor=1)
+          example: 4
+        remarks:
+          type: string
+          example: Paint is in perfect condition
+        photos:
+          type: array
+          items:
+            type: string
+            format: uri
+          example: ["https://example.com/photos/paint1.jpg"]
+
+    InspectionTypeResponse:
+      type: object
+      required:
+        - typeName
+        - checklistItems
+      properties:
+        typeName:
+          type: string
+          example: Exterior
+        checklistItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChecklistItemResponse'
+        overallRemarks:
+          type: string
+          example: Exterior is in excellent condition overall
+        overallPhotos:
+          type: array
+          items:
+            type: string
+            format: uri
+          example: ["https://example.com/photos/exterior1.jpg"]
+        videos:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Only for Interior and Exterior types, max 2
+          example: ["https://example.com/videos/exterior1.mp4"]
+        averageRating:
+          type: number
+          format: float
+          example: 3.67
+
+    CreateInspectionRequest:
+      type: object
+      required:
+        - checklistTemplateId
+        - vehicleInfo
+        - types
+      properties:
+        checklistTemplateId:
+          type: string
+          example: "507f1f77bcf86cd799439020"
+        vehicleInfo:
+          $ref: '#/components/schemas/VehicleInfo'
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionTypeResponse'
+        status:
+          type: string
+          enum: [draft, completed, submitted]
+          default: draft
+        inspectionDate:
+          type: string
+          format: date-time
+        notes:
+          type: string
+
+    UpdateInspectionRequest:
+      type: object
+      properties:
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionTypeResponse'
+        status:
+          type: string
+          enum: [draft, completed, submitted]
+        notes:
+          type: string
+
+    Inspection:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439030"
+        checklistTemplateId:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/Template'
+        inspectorId:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/User'
+        vehicleInfo:
+          $ref: '#/components/schemas/VehicleInfo'
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/InspectionTypeResponse'
+        overallRating:
+          type: number
+          format: float
+          example: 3.56
+        status:
+          type: string
+          enum: [draft, completed, submitted]
+        inspectionDate:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    InspectionResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            inspection:
+              $ref: '#/components/schemas/Inspection'
+
+    InspectionsListResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Inspections retrieved successfully
+        data:
+          type: object
+          properties:
+            inspections:
+              type: array
+              items:
+                $ref: '#/components/schemas/Inspection'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+
+    # Inspection Request Schemas
+    Location:
+      type: object
+      required:
+        - address
+        - city
+        - state
+      properties:
+        address:
+          type: string
+          example: "123 Main Street"
+        city:
+          type: string
+          example: New York
+        state:
+          type: string
+          example: NY
+        zipCode:
+          type: string
+          example: "10001"
+
+    CreateInspectionRequestRequest:
+      type: object
+      required:
+        - email
+        - vehicleInfo
+      properties:
+        email:
+          type: string
+          format: email
+          description: |
+            User email (required). 
+            - If email exists: request is mapped to that user
+            - If email doesn't exist: new user is auto-created
+          example: user@example.com
+        firstName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: Optional. Used if creating new user or updating existing user's missing firstName
+          example: John
+        lastName:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: Optional. Used if creating new user or updating existing user's missing lastName
+          example: Doe
+        phone:
+          type: string
+          maxLength: 20
+          description: Optional. Used if creating new user or updating existing user's missing phone
+          example: "+1234567890"
+        requestType:
+          type: string
+          enum: [car inspection, car valuation]
+          default: car inspection
+        vehicleInfo:
+          $ref: '#/components/schemas/VehicleInfo'
+        preferredDate:
+          type: string
+          format: date-time
+          example: "2024-01-20T10:00:00.000Z"
+        preferredTime:
+          type: string
+          example: "10:00 AM"
+        location:
+          $ref: '#/components/schemas/Location'
+        notes:
+          type: string
+          example: Please inspect the vehicle thoroughly
+
+    UpdateInspectionRequestRequest:
+      type: object
+      description: At least one field required. Only editable when request status is pending. User can only edit own request.
+      minProperties: 1
+      properties:
+        requestType:
+          type: string
+          enum: [car inspection, car valuation]
+        vehicleInfo:
+          type: object
+          properties:
+            make: { type: string, maxLength: 50 }
+            model: { type: string, maxLength: 50 }
+            year: { type: integer, minimum: 1900 }
+            vin: { type: string, maxLength: 17 }
+            licensePlate: { type: string, maxLength: 20 }
+            mileage: { type: number, minimum: 0 }
+            color: { type: string, maxLength: 30 }
+        preferredDate:
+          type: string
+          format: date-time
+          nullable: true
+        preferredTime:
+          type: string
+          maxLength: 20
+        location:
+          type: object
+          properties:
+            address: { type: string, maxLength: 200 }
+            city: { type: string, maxLength: 50 }
+            state: { type: string, maxLength: 50 }
+            zipCode: { type: string, maxLength: 10 }
+        notes:
+          type: string
+          maxLength: 1000
+
+    AssignInspectorRequest:
+      type: object
+      required:
+        - inspectorId
+      properties:
+        inspectorId:
+          type: string
+          description: MongoDB ObjectId of the inspector (role=inspector, active, is_assigned=false)
+
+    RejectInspectionRequestRequest:
+      type: object
+      description: Optional reason for rejection (max 500 chars)
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    InspectionRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439040"
+        userId:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/User'
+        requestType:
+          type: string
+          enum: [car inspection, car valuation]
+        vehicleInfo:
+          $ref: '#/components/schemas/VehicleInfo'
+        preferredDate:
+          type: string
+          format: date-time
+        preferredTime:
+          type: string
+        location:
+          $ref: '#/components/schemas/Location'
+        status:
+          type: string
+          enum: [pending, assigned, in_progress, completed, cancelled]
+        assignedInspectorId:
+          type: string
+          nullable: true
+        assignedAt:
+          type: string
+          format: date-time
+          nullable: true
+        adminApprovedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when admin approves the request (pending only)
+        notes:
+          type: string
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledReason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    InspectionRequestResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            request:
+              $ref: '#/components/schemas/InspectionRequest'
+
+    InspectionRequestsListResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Inspection requests retrieved successfully
+        data:
+          type: object
+          properties:
+            requests:
+              type: array
+              items:
+                $ref: '#/components/schemas/InspectionRequest'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+
+    InspectionRequestStatistics:
+      type: object
+      properties:
+        total:
+          type: integer
+        pending:
+          type: integer
+        assigned:
+          type: integer
+        inProgress:
+          type: integer
+        completed:
+          type: integer
+        cancelled:
+          type: integer
+
+    AdminInspectionRequestsResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Inspection requests retrieved successfully
+        data:
+          type: object
+          properties:
+            requests:
+              type: array
+              items:
+                $ref: '#/components/schemas/InspectionRequest'
+            statistics:
+              $ref: '#/components/schemas/InspectionRequestStatistics'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+
+    # Admin Dashboard Schemas
+    LatestRequest:
+      type: object
+      properties:
+        request_id:
+          type: string
+        request_type:
+          type: string
+        request_location:
+          type: string
+        request_status:
+          type: string
+          enum: [Pending, Assigned, In Progress, Completed, Cancelled]
+
+    RecentActivity:
+      type: object
+      properties:
+        action:
+          type: string
+          example: user_registered
+        description:
+          type: string
+          example: John Doe (john@example.com) registered as user
+
+    AdminDashboardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Admin dashboard data retrieved successfully
+        data:
+          type: object
+          properties:
+            total_users:
+              type: integer
+              example: 150
+            total_inspectors:
+              type: integer
+              example: 25
+            total_checklist_templates:
+              type: integer
+              example: 10
+            user_role_stats:
+              type: object
+              description: User count per role
+              properties:
+                admin:
+                  type: integer
+                  example: 5
+                inspector:
+                  type: integer
+                  example: 25
+                user:
+                  type: integer
+                  example: 120
+            inspection_requests:
+              type: object
+              properties:
+                total_requests:
+                  type: integer
+                  example: 500
+                open_requests:
+                  type: integer
+                  example: 45
+                latest_requests:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LatestRequest'
+            recent_activities:
+              type: array
+              description: Activities from the last 24 hours (user registrations, inspection requests, inspections completed, templates created), most recent first, max 20
+              items:
+                $ref: '#/components/schemas/RecentActivity'
+
+    # Common Schemas
+    Pagination:
+      type: object
+      properties:
+        currentPage:
+          type: integer
+          example: 1
+        totalPages:
+          type: integer
+          example: 5
+        totalCount:
+          type: integer
+          example: 50
+        limit:
+          type: integer
+          example: 10
+        hasNextPage:
+          type: boolean
+          example: true
+        hasPreviousPage:
+          type: boolean
+          example: false
+
+    SuccessResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+          example: Operation completed successfully
+
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+          example: email
+        message:
+          type: string
+          example: Email must be a valid email address
+
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: Validation failed
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+
+  responses:
+    BadRequest:
+      description: Bad Request - Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Unauthorized:
+      description: Unauthorized - Missing or invalid token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              statusCode:
+                type: integer
+                example: 401
+              message:
+                type: string
+                example: Unauthorized
+              error:
+                type: string
+                example: No token provided
+
+    Forbidden:
+      description: Forbidden - Insufficient permissions
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              statusCode:
+                type: integer
+                example: 403
+              message:
+                type: string
+                example: Forbidden - Insufficient permissions
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              statusCode:
+                type: integer
+                example: 404
+              message:
+                type: string
+                example: Resource not found
+
+    Conflict:
+      description: Conflict - Resource already exists
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              statusCode:
+                type: integer
+                example: 409
+              message:
+                type: string
+                example: Resource already exists
