@@ -150,6 +150,9 @@ functions:
       - httpApi:
           path: /api/checklists/inspections/{id}
           method: DELETE
+      - httpApi:
+          path: /api/checklists/inspections/{id}/start
+          method: POST
 
   # Admin Dashboard endpoint
   statisticsApi:
@@ -190,6 +193,9 @@ functions:
       - httpApi:
           path: /api/inspection-requests/{id}/reject
           method: PUT
+      - httpApi:
+          path: /api/inspection-requests/{id}/start
+          method: POST
       - httpApi:
           path: /api/inspection-requests/admin/all
           method: GET

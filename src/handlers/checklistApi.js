@@ -69,6 +69,8 @@ exports.handler = asyncHandler(async (event) => {
       return checklistHandler.updateInspection(event);
     case 'DELETE /api/checklists/inspections/{id}':
       return checklistHandler.deleteInspection(event);
+    case 'POST /api/checklists/inspections/{id}/start':
+      return checklistHandler.startInspection(event);
     
     default:
       throw new BadRequestError(`Unsupported route: ${routeKey}`);

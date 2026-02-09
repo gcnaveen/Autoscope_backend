@@ -15,6 +15,7 @@ const {
   approveRequest: approveRequestController,
   rejectRequest: rejectRequestController
 } = require('../controllers/inspectionRequestController');
+const { startInspection: startInspectionController } = require('../controllers/checklistController');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate, schemas } = require('../middleware/validator');
 const { parseQueryParams } = require('../utils/queryParams');

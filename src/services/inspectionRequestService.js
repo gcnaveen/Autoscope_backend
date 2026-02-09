@@ -554,9 +554,9 @@ class InspectionRequestService {
       if (inspector.status !== USER_STATUS.ACTIVE) {
         throw new BadRequestError('Inspector is not active and cannot be assigned');
       }
-      if (inspector.is_assigned) {
-        throw new BadRequestError('Inspector is already assigned to another request');
-      }
+      // if (inspector.is_assigned) {
+      //   throw new BadRequestError('Inspector is already assigned to another request');
+      // }
 
       request.assignedInspectorId = inspectorId;
       request.assignedAt = new Date();

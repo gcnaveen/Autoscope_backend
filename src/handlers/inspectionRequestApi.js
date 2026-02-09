@@ -34,6 +34,8 @@ exports.handler = asyncHandler(async (event) => {
       return inspectionRequestHandler.approveRequest(event);
     case 'PUT /api/inspection-requests/{id}/reject':
       return inspectionRequestHandler.rejectRequest(event);
+    case 'POST /api/inspection-requests/{id}/start':
+      return inspectionRequestHandler.startInspection(event);
     case 'GET /api/inspection-requests/admin/all':
       return inspectionRequestHandler.getAllRequestsForAdmin(event);
     default:

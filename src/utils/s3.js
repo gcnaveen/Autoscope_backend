@@ -26,16 +26,42 @@ let _client = null;
 
 function getS3Client() {
   if (!_client) {
+    if (!AWS_REGION) {
+      throw new Error('AWS_REGION environment variable is not set');
+    }
     _client = new S3Client({ region: AWS_REGION });
+    logger.info('S3 client initialized', { region: AWS_REGION, bucket: S3_BUCKET });
   }
   return _client;
 }
 
 /**
+ * Normalize S3 key - ensure it's properly formatted (no leading/trailing slashes, no double slashes)
+ * This prevents signature mismatch errors in presigned URLs
+ */
+function normalizeKey(key) {
+  if (!key || typeof key !== 'string') {
+    throw new Error('Key must be a non-empty string');
+  }
+  // Trim and remove leading/trailing slashes, collapse multiple slashes (avoids signature mismatch)
+  return key.trim().replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+}
+
+/**
  * Build public URL for an object in the bucket
+ * Properly encodes path segments while preserving forward slashes
  */
 function getPublicUrl(key) {
-  const encodedKey = encodeURIComponent(key).replace(/%2F/g, '/');
+  if (!key || typeof key !== 'string') {
+    throw new Error('Key must be a non-empty string');
+  }
+  
+  // Normalize key first
+  const normalizedKey = normalizeKey(key);
+  
+  // Split by forward slash, encode each segment separately, then join back
+  // This preserves forward slashes while properly encoding special characters in filenames
+  const encodedKey = normalizedKey.split('/').map(segment => encodeURIComponent(segment)).join('/');
   return `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${encodedKey}`;
 }
 
@@ -92,29 +118,56 @@ function buildUploadKey(folder, fileName) {
  * Presigned PUT URL for single upload (photos or small videos)
  */
 async function getPresignedPutUrl(key, contentType, expiresIn = DEFAULT_EXPIRES_IN_SECONDS) {
-  const client = getS3Client();
-  const command = new PutObjectCommand({
-    Bucket: S3_BUCKET,
-    Key: key,
-    ContentType: contentType || 'application/octet-stream'
-  });
-  const url = await getSignedUrl(client, command, { expiresIn });
-  logger.info('Presigned PUT URL generated', { key, bucket: S3_BUCKET, expiresIn });
-  return url;
+  try {
+    // Normalize key to prevent signature mismatch errors
+    const normalizedKey = normalizeKey(key);
+    
+    if (!S3_BUCKET) {
+      throw new Error('S3_BUCKET environment variable is not set');
+    }
+    
+    const client = getS3Client();
+    const command = new PutObjectCommand({
+      Bucket: S3_BUCKET,
+      Key: normalizedKey,
+      ContentType: contentType || 'application/octet-stream'
+    });
+    
+    const url = await getSignedUrl(client, command, { expiresIn });
+    logger.info('Presigned PUT URL generated', { 
+      key: normalizedKey, 
+      bucket: S3_BUCKET, 
+      region: AWS_REGION,
+      expiresIn,
+      contentType 
+    });
+    return url;
+  } catch (error) {
+    logger.error('Error generating presigned PUT URL', error, { 
+      key, 
+      bucket: S3_BUCKET, 
+      region: AWS_REGION,
+      contentType 
+    });
+    throw error;
+  }
 }
 
 /**
  * Create multipart upload (for large videos – 10+ min). Client uploads parts then calls complete.
  */
 async function createMultipartUpload(key, contentType) {
+  // Normalize key to prevent signature mismatch errors
+  const normalizedKey = normalizeKey(key);
+  
   const client = getS3Client();
   const command = new CreateMultipartUploadCommand({
     Bucket: S3_BUCKET,
-    Key: key,
+    Key: normalizedKey,
     ContentType: contentType || 'video/mp4'
   });
   const response = await client.send(command);
-  logger.info('Multipart upload created', { key, uploadId: response.UploadId, bucket: S3_BUCKET });
+  logger.info('Multipart upload created', { key: normalizedKey, uploadId: response.UploadId, bucket: S3_BUCKET });
   return { uploadId: response.UploadId };
 }
 
@@ -122,10 +175,13 @@ async function createMultipartUpload(key, contentType) {
  * Presigned URL for one part of a multipart upload
  */
 async function getPresignedPartUrl(key, uploadId, partNumber, expiresIn = MULTIPART_PART_EXPIRES_IN_SECONDS) {
+  // Normalize key to prevent signature mismatch errors
+  const normalizedKey = normalizeKey(key);
+  
   const client = getS3Client();
   const command = new UploadPartCommand({
     Bucket: S3_BUCKET,
-    Key: key,
+    Key: normalizedKey,
     UploadId: uploadId,
     PartNumber: partNumber
   });
@@ -137,32 +193,38 @@ async function getPresignedPartUrl(key, uploadId, partNumber, expiresIn = MULTIP
  * Complete multipart upload. parts: [{ PartNumber, ETag }]
  */
 async function completeMultipartUpload(key, uploadId, parts) {
+  // Normalize key to prevent signature mismatch errors
+  const normalizedKey = normalizeKey(key);
+  
   const client = getS3Client();
   const command = new CompleteMultipartUploadCommand({
     Bucket: S3_BUCKET,
-    Key: key,
+    Key: normalizedKey,
     UploadId: uploadId,
     MultipartUpload: {
       Parts: parts.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag }))
     }
   });
   await client.send(command);
-  logger.info('Multipart upload completed', { key, uploadId, bucket: S3_BUCKET });
-  return getPublicUrl(key);
+  logger.info('Multipart upload completed', { key: normalizedKey, uploadId, bucket: S3_BUCKET });
+  return getPublicUrl(normalizedKey);
 }
 
 /**
  * Abort multipart upload (cleanup on client failure)
  */
 async function abortMultipartUpload(key, uploadId) {
+  // Normalize key to prevent signature mismatch errors
+  const normalizedKey = normalizeKey(key);
+  
   const client = getS3Client();
   const command = new AbortMultipartUploadCommand({
     Bucket: S3_BUCKET,
-    Key: key,
+    Key: normalizedKey,
     UploadId: uploadId
   });
   await client.send(command);
-  logger.info('Multipart upload aborted', { key, uploadId, bucket: S3_BUCKET });
+  logger.info('Multipart upload aborted', { key: normalizedKey, uploadId, bucket: S3_BUCKET });
 }
 
 /** Allowed prefix for delete – only inspection uploads */
@@ -174,7 +236,8 @@ const INSPECTION_UPLOADS_PREFIX = 'uploads/inspections/';
  * @returns {Promise<void>}
  */
 async function deleteObject(key) {
-  const normalized = (key || '').trim();
+  // Normalize key to prevent signature mismatch errors
+  const normalized = normalizeKey(key || '');
   if (!normalized.startsWith(INSPECTION_UPLOADS_PREFIX)) {
     throw new Error(`Delete allowed only for keys under ${INSPECTION_UPLOADS_PREFIX}`);
   }

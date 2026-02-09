@@ -13,7 +13,7 @@ const {
   ForbiddenError,
   DatabaseError
 } = require('../utils/errors');
-const { INSPECTION_TYPES, STATUS_RATING_MAP, VIDEO_ALLOWED_TYPES } = require('../config/constants');
+const { INSPECTION_TYPES, VIDEO_ALLOWED_TYPES } = require('../config/constants');
 const logger = require('../utils/logger');
 
 /**
@@ -322,6 +322,9 @@ class ChecklistService {
       if (!template) {
         throw new NotFoundError('Checklist template not found or is not active');
       }
+      if (!template.types || !Array.isArray(template.types) || template.types.length === 0) {
+        throw new BadRequestError('Checklist template has no types defined');
+      }
 
       // Validate that all required types are present
       const templateTypeNames = template.types.map(t => t.typeName);
@@ -354,25 +357,94 @@ class ChecklistService {
           }
         }
 
-        // Validate ratings match status
-        typeInspection.checklistItems.forEach(item => {
-          const expectedRating = STATUS_RATING_MAP[item.status];
-          if (item.rating !== expectedRating) {
-            throw new BadRequestError(`Rating ${item.rating} does not match status ${item.status} for item: ${item.label}`);
-          }
-        });
+        // Rating is 0–5 (decimal allowed); no strict match to status
       });
 
+      // Normalize nulls so Mongoose accepts payload (setters may not run on nested create)
+      const normalizedTypes = (inspectionData.types || []).map(type => ({
+        typeName: type.typeName,
+        checklistItems: (type.checklistItems || []).map(item => ({
+          position: item.position,
+          label: item.label,
+          status: item.status,
+          rating: item.rating != null ? Number(item.rating) : 0,
+          remarks: item.remarks != null ? String(item.remarks) : '',
+          photos: Array.isArray(item.photos) ? item.photos : []
+        })),
+        overallRemarks: type.overallRemarks != null ? String(type.overallRemarks) : '',
+        overallPhotos: Array.isArray(type.overallPhotos) ? type.overallPhotos : [],
+        videos: Array.isArray(type.videos) ? type.videos : [],
+        averageRating: type.averageRating != null ? Number(type.averageRating) : 0
+      }));
+
+      const inspectorId = currentUser._id || currentUser.id;
+      if (!inspectorId) {
+        throw new BadRequestError('Invalid user: inspector ID is missing');
+      }
+
       // Create inspection (ratings will be calculated in pre-save hook)
+      const inspectionStatus = inspectionData.status || 'draft';
       const inspection = await Inspection.create({
         checklistTemplateId: inspectionData.checklistTemplateId,
-        inspectorId: currentUser.id,
+        inspectorId,
         vehicleInfo: inspectionData.vehicleInfo || {},
-        types: inspectionData.types,
-        status: inspectionData.status || 'draft',
+        types: normalizedTypes,
+        status: inspectionStatus,
         inspectionDate: inspectionData.inspectionDate || new Date(),
-        notes: inspectionData.notes || ''
+        notes: inspectionData.notes != null ? String(inspectionData.notes) : ''
       });
+
+      // If linked to an inspection request, set inspectionId and update status if submitting
+      if (inspectionData.inspectionRequestId) {
+        const InspectionRequest = require('../models/InspectionRequest');
+        const inspectionRequest = await InspectionRequest.findOne({
+          _id: inspectionData.inspectionRequestId,
+          assignedInspectorId: inspectorId,
+          status: { $in: ['assigned', 'in_progress', 'pending'] }
+        });
+
+        if (inspectionRequest) {
+          const previousStatus = inspectionRequest.status;
+          
+          // If inspection is being created with completed/submitted status, mark request as completed
+          const isSubmitting = inspectionStatus === 'completed' || inspectionStatus === 'submitted';
+          
+          inspectionRequest.inspectionId = inspection._id;
+          if (isSubmitting) {
+            inspectionRequest.status = 'completed';
+            
+            // Set inspection end time
+            inspectionRequest.inspectionEndTime = new Date();
+            
+            // Calculate time taken if start time exists
+            if (inspectionRequest.inspectionStartTime) {
+              const timeDiffMs = inspectionRequest.inspectionEndTime.getTime() - inspectionRequest.inspectionStartTime.getTime();
+              inspectionRequest.timeTaken = Math.round(timeDiffMs / 1000); // Convert to seconds and round
+            }
+          }
+          await inspectionRequest.save();
+
+          if (isSubmitting) {
+            logger.info('Inspection request linked and marked completed', {
+              inspectionRequestId: inspectionData.inspectionRequestId,
+              inspectionId: inspection.id,
+              previousStatus: previousStatus,
+              endTime: inspectionRequest.inspectionEndTime,
+              timeTaken: inspectionRequest.timeTaken
+            });
+          } else {
+            logger.info('Inspection request linked to inspection', {
+              inspectionRequestId: inspectionData.inspectionRequestId,
+              inspectionId: inspection.id,
+              currentStatus: inspectionRequest.status
+            });
+          }
+        } else {
+          logger.warn('Inspection request not updated (not found or not assigned to inspector)', {
+            inspectionRequestId: inspectionData.inspectionRequestId
+          });
+        }
+      }
 
       logger.info('Inspection created successfully', {
         inspectionId: inspection.id,
@@ -382,15 +454,152 @@ class ChecklistService {
 
       return inspection;
     } catch (error) {
-      logger.error('Error creating inspection', error, { inspectorId: currentUser.id });
-      
+      logger.error('Error creating inspection', error, {
+        inspectorId: currentUser._id || currentUser.id,
+        templateId: inspectionData.checklistTemplateId,
+        message: error.message,
+        name: error.name
+      });
+
       if (error instanceof NotFoundError || error instanceof BadRequestError) {
         throw error;
       }
-      
+
       throw new DatabaseError('Failed to create inspection', error);
     }
   }
+
+  /**
+   * Start an inspection request - sets start time and status to in_progress (no linked inspection required)
+   * @param {string} inspectionRequestId - Inspection Request ID
+   * @param {Object} currentUser - Current authenticated user (inspector)
+   * @returns {Promise<Object>} Updated inspection request
+   */
+  async startInspection(inspectionRequestId, currentUser) {
+    try {
+      const InspectionRequest = require('../models/InspectionRequest');
+      const inspectionRequest = await InspectionRequest.findById(inspectionRequestId);
+      
+      if (!inspectionRequest) {
+        throw new NotFoundError('Inspection request not found');
+      }
+
+      // Verify the request is assigned to the current inspector
+      if (inspectionRequest.assignedInspectorId.toString() !== currentUser.id) {
+        throw new ForbiddenError('You do not have permission to start this inspection request');
+      }
+
+      // Only allow starting if status is assigned or pending
+      if (!['assigned', 'pending'].includes(inspectionRequest.status)) {
+        throw new BadRequestError(`Cannot start. Request status is '${inspectionRequest.status}'. Expected 'assigned' or 'pending'.`);
+      }
+
+      // Prevent overwriting if inspection has already been started
+      if (inspectionRequest.inspectionStartTime) {
+        throw new BadRequestError('Inspection has already been started');
+      }
+
+      // Set status to in_progress and record start time
+      inspectionRequest.status = 'in_progress';
+      inspectionRequest.inspectionStartTime = new Date();
+      await inspectionRequest.save();
+
+      logger.info('Inspection request started successfully', {
+        inspectionRequestId: inspectionRequest.id,
+        startedBy: currentUser.id,
+        startTime: inspectionRequest.inspectionStartTime
+      });
+
+      return inspectionRequest;
+    } catch (error) {
+      logger.error('Error starting inspection request', error, { inspectionRequestId });
+      
+      if (error instanceof NotFoundError || error instanceof BadRequestError || error instanceof ForbiddenError) {
+        throw error;
+      }
+      
+      throw new DatabaseError('Failed to start inspection request', error);
+    }
+  }
+
+  /**
+   * Start an inspection by inspection ID - sets the inspection start time and updates linked request to in_progress
+   * @param {string} inspectionId - Inspection ID
+   * @param {Object} currentUser - Current authenticated user (inspector)
+   * @returns {Promise<Object>} Updated inspection with start time
+   */
+  // async startInspectionByInspectionId(inspectionId, currentUser) {
+  //   try {
+  //     const inspection = await Inspection.findById(inspectionId);
+      
+  //     if (!inspection) {
+  //       throw new NotFoundError('Inspection not found');
+  //     }
+
+  //     // Only inspector who created it can start
+  //     if (inspection.inspectorId.toString() !== currentUser.id) {
+  //       throw new ForbiddenError('You do not have permission to start this inspection');
+  //     }
+
+  //     // Only draft inspections can be started
+  //     if (inspection.status !== 'draft') {
+  //       throw new BadRequestError('Only draft inspections can be started');
+  //     }
+
+  //     // Check if inspection is already started
+  //     if (inspection.inspectionStartTime) {
+  //       throw new BadRequestError('Inspection has already been started');
+  //     }
+
+  //     // Set start time
+  //     inspection.inspectionStartTime = new Date();
+  //     await inspection.save();
+
+  //     // Update linked inspection request status to 'in_progress' if it exists
+  //     const InspectionRequest = require('../models/InspectionRequest');
+  //     const inspectionRequest = await InspectionRequest.findOne({
+  //       inspectionId: inspection._id,
+  //       assignedInspectorId: currentUser.id,
+  //       status: { $in: ['assigned', 'pending'] }
+  //     });
+
+  //     if (inspectionRequest) {
+  //       const previousStatus = inspectionRequest.status;
+  //       inspectionRequest.status = 'in_progress';
+        
+  //       // Set start time on inspection request if not already set
+  //       if (!inspectionRequest.inspectionStartTime) {
+  //         inspectionRequest.inspectionStartTime = inspection.inspectionStartTime;
+  //       }
+        
+  //       await inspectionRequest.save();
+
+  //       logger.info('Inspection request status updated to in_progress', {
+  //         inspectionRequestId: inspectionRequest.id,
+  //         inspectionId: inspection.id,
+  //         previousStatus: previousStatus,
+  //         startTime: inspectionRequest.inspectionStartTime
+  //       });
+  //     }
+
+  //     logger.info('Inspection started successfully (by inspection ID)', {
+  //       inspectionId: inspection.id,
+  //       startedBy: currentUser.id,
+  //       startTime: inspection.inspectionStartTime,
+  //       inspectionRequestUpdated: !!inspectionRequest
+  //     });
+
+  //     return inspection;
+  //   } catch (error) {
+  //     logger.error('Error starting inspection by inspection ID', error, { inspectionId });
+      
+  //     if (error instanceof NotFoundError || error instanceof BadRequestError || error instanceof ForbiddenError) {
+  //       throw error;
+  //     }
+      
+  //     throw new DatabaseError('Failed to start inspection', error);
+  //   }
+  // }
 
   /**
    * Get inspection by ID
@@ -562,15 +771,15 @@ class ChecklistService {
             }
           }
 
-          // Validate ratings match status
-          typeInspection.checklistItems.forEach(item => {
-            const expectedRating = STATUS_RATING_MAP[item.status];
-            if (item.rating !== expectedRating) {
-              throw new BadRequestError(`Rating ${item.rating} does not match status ${item.status}`);
-            }
-          });
+          // Rating is 0–5 (decimal allowed); no strict match to status
         });
       }
+
+      // Track if status is changing to completed/submitted
+      const previousStatus = inspection.status;
+      const isSubmitting = updateData.status && 
+        (updateData.status === 'completed' || updateData.status === 'submitted') &&
+        previousStatus !== updateData.status;
 
       // Update fields
       if (updateData.vehicleInfo !== undefined) {
@@ -588,9 +797,33 @@ class ChecklistService {
 
       await inspection.save(); // Pre-save hook will recalculate ratings
 
+      // If inspection is being submitted, update linked inspection request status to 'completed'
+      if (isSubmitting) {
+        const InspectionRequest = require('../models/InspectionRequest');
+        const inspectionRequest = await InspectionRequest.findOne({
+          inspectionId: inspection._id,
+          assignedInspectorId: currentUser.id,
+          status: { $in: ['assigned', 'in_progress', 'pending'] }
+        });
+
+        if (inspectionRequest) {
+          const previousRequestStatus = inspectionRequest.status;
+          inspectionRequest.status = 'completed';
+          await inspectionRequest.save();
+
+          logger.info('Inspection request status updated to completed', {
+            inspectionRequestId: inspectionRequest.id,
+            inspectionId: inspection.id,
+            previousStatus: previousRequestStatus,
+            inspectionStatus: inspection.status
+          });
+        }
+      }
+
       logger.info('Inspection updated successfully', {
         inspectionId: inspection.id,
-        updatedBy: currentUser.id
+        updatedBy: currentUser.id,
+        statusChanged: isSubmitting ? `${previousStatus} -> ${inspection.status}` : 'no change'
       });
 
       return inspection;

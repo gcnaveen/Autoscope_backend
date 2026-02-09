@@ -170,6 +170,36 @@ const deleteInspection = async (inspectionId, currentUser) => {
   });
 };
 
+/**
+ * Start inspection by inspection request ID (inspector only) - sets start time and status to in_progress
+ * @param {string} inspectionRequestId - Inspection Request ID
+ * @param {Object} currentUser - Current authenticated user
+ * @returns {Promise<Object>} Success response with updated inspection request
+ */
+const startInspection = async (inspectionRequestId, currentUser) => {
+  const request = await checklistService.startInspection(inspectionRequestId, currentUser);
+  
+  return success({
+    message: 'Inspection started successfully',
+    data: { request }
+  });
+};
+
+/**
+ * Start inspection by inspection ID (inspector only) - sets start time and updates linked request to in_progress
+ * @param {string} inspectionId - Inspection ID
+ * @param {Object} currentUser - Current authenticated user
+ * @returns {Promise<Object>} Success response with updated inspection
+ */
+// const startInspectionByInspectionId = async (inspectionId, currentUser) => {
+//   const inspection = await checklistService.startInspectionByInspectionId(inspectionId, currentUser);
+  
+//   return success({
+//     message: 'Inspection started successfully',
+//     data: { inspection }
+//   });
+// };
+
 module.exports = {
   createTemplate,
   getAllTemplates,
@@ -181,5 +211,7 @@ module.exports = {
   getInspectionById,
   getAllInspections,
   updateInspection,
-  deleteInspection
+  deleteInspection,
+  startInspection,
+  // startInspectionByInspectionId
 };

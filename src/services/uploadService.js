@@ -81,10 +81,22 @@ function validateTypeName(typeName) {
 async function getPresignedUploadUrl(params, currentUser) {
   assertInspectorOrAdmin(currentUser);
 
-  const { inspectionId, typeName, fileName, contentType, mediaType: explicitMediaType, expiresIn } = params;
+  const {
+    // inspectionId,
+    inspectionRequestId,
+    typeName,
+    fileName,
+    contentType,
+    mediaType: explicitMediaType,
+    expiresIn
+  } = params;
 
-  if (!inspectionId || typeof inspectionId !== 'string' || !inspectionId.trim()) {
-    throw new BadRequestError('inspectionId is required');
+  // Allow either inspectionId or inspectionRequestId for folder grouping.
+  // Strip all whitespace/newlines so the key never breaks the presigned URL.
+  const rawId = (params.inspectionRequestId ?? params.inspectionId ?? '').toString().trim();
+  const folderId = rawId.replace(/\s+/g, '');
+  if (!folderId) {
+    throw new BadRequestError('Either inspectionId or inspectionRequestId is required');
   }
   if (!fileName || typeof fileName !== 'string' || !fileName.trim()) {
     throw new BadRequestError('fileName is required');
@@ -100,7 +112,8 @@ async function getPresignedUploadUrl(params, currentUser) {
     ? explicitMediaType
     : mediaTypeFromContentType(normalizedType);
 
-  const key = buildInspectionMediaKey(inspectionId, typeName, mediaType, fileName);
+  // Use folderId (inspection or request ID) purely for S3 key organization
+  const key = buildInspectionMediaKey(folderId, typeName, mediaType, fileName);
 
   const isVideo = mediaType === 'videos';
   const defaultExpires = isVideo ? DEFAULT_VIDEO_EXPIRES_IN_SECONDS : DEFAULT_EXPIRES_IN_SECONDS;
@@ -112,7 +125,9 @@ async function getPresignedUploadUrl(params, currentUser) {
 
   logger.info('Presigned upload URL issued', {
     key,
-    inspectionId,
+    // inspectionId,
+    inspectionRequestId,
+    folderId,
     typeName,
     mediaType,
     contentType: normalizedType,

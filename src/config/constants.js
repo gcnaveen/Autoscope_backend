@@ -38,20 +38,24 @@ module.exports = {
     DRIVE_AND_PASSENGER_EXPERIENCE: 'Drive and Passenger Experience'
   },
 
-  // Checklist Item Status
+  // Checklist Item Status (includes Fair and Not Checked for inspector flexibility)
   CHECKLIST_STATUS: {
     EXCELLENT: 'Excellent',
     GOOD: 'Good',
     AVERAGE: 'Average',
-    POOR: 'Poor'
+    POOR: 'Poor',
+    FAIR: 'Fair',
+    NOT_CHECKED: 'Not Checked'
   },
 
-  // Status to Rating Mapping (for average calculation)
+  // Status to Rating Mapping (for average calculation; Fair/Not Checked are flexible)
   STATUS_RATING_MAP: {
     'Excellent': 4,
     'Good': 3,
     'Average': 2,
-    'Poor': 1
+    'Poor': 1,
+    'Fair': 2.5,
+    'Not Checked': 0
   },
 
   // Types that allow video uploads

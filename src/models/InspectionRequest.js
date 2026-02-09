@@ -110,6 +110,24 @@ const inspectionRequestSchema = new mongoose.Schema({
       default: ''
     }
   },
+  inspectionStartTime: {
+    type: Date,
+    default: null,
+    index: true
+  },
+  inspectionEndTime: {
+    type: Date,
+    default: null
+  },
+  timeTaken: {
+    type: Number,
+    default: null,
+    min: [0, 'Time taken cannot be negative'],
+    set: function(value) {
+      // Round to nearest second if value exists
+      return value != null ? Math.round(value) : null;
+    }
+  },
   status: {
     type: String,
     enum: ['pending', 'assigned', 'in_progress', 'completed', 'cancelled'],

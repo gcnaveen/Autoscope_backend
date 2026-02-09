@@ -762,13 +762,54 @@ paths:
       tags:
         - Inspections
       summary: Create inspection (Inspector only)
-      description: Create a new inspection based on a checklist template.
+      description: |
+        Create a new inspection based on a checklist template.
+        **Payload structure:** Each item in `types` represents one inspection type (e.g. Exterior, Engine).
+        - **typeName** – The inspection type (must match template type names).
+        - **checklistItems** – The checklist items for that type (position, label, status, rating, remarks, photos).
+        All template types must be present. Item counts per type must match the template. `remarks`, `overallRemarks`, and `notes` may be null (stored as empty string). Rating is 0–5 (decimals allowed). Status may include "Fair" and "Not Checked".
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateInspectionRequest'
+            example:
+              checklistTemplateId: "6982423e08f0b75b8f18c9de"
+              inspectionDate: "2026-02-09T20:53:50.614"
+              status: draft
+              notes: null
+              types:
+                - typeName: Exterior
+                  checklistItems:
+                    - position: 1
+                      label: Front Windshield Glass
+                      status: Excellent
+                      rating: 4
+                      remarks: null
+                      photos: []
+                    - position: 2
+                      label: Rear Windshield Glass
+                      status: Excellent
+                      rating: 3.5
+                      remarks: null
+                      photos: []
+                  overallRemarks: null
+                  overallPhotos: []
+                  videos: []
+                  averageRating: 3.9
+                - typeName: Interior
+                  checklistItems:
+                    - position: 1
+                      label: Seats / Upholstery
+                      status: Good
+                      rating: 4
+                      remarks: ""
+                      photos: []
+                  overallRemarks: null
+                  overallPhotos: []
+                  videos: []
+                  averageRating: 4
       responses:
         '201':
           description: Inspection created successfully
@@ -885,6 +926,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/checklists/inspections/{id}/start:
+    post:
+      tags:
+        - Inspections
+      summary: Start inspection (Inspector only)
+      description: |
+        Start an inspection by inspection ID. Sets the inspection start time and updates the linked inspection request status to **in_progress**.
+        
+        **On success:**
+        - `inspectionStartTime` is set to the current timestamp
+        - If the inspection is linked to an inspection request (assigned to the inspector), that request's status is set to **in_progress**
+        
+        **Requirements:**
+        - Inspection must be in 'draft' status
+        - Only the inspector who created the inspection can start it
+        - Inspection must not already have a start time
+      parameters:
+        - $ref: '#/components/parameters/InspectionId'
+      responses:
+        '200':
+          description: Inspection started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionResponse'
+              example:
+                success: true
+                message: "Inspection started successfully"
+                data:
+                  inspection:
+                    id: "6980c6abdd6135e4d6045dea"
+                    inspectionStartTime: "2026-02-09T20:53:50.614Z"
+                    status: "draft"
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1161,6 +1244,54 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InspectionRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/inspection-requests/{id}/start:
+    post:
+      tags:
+        - Inspection Requests
+      summary: Start inspection (Inspector only)
+      description: |
+        Start an inspection by setting the inspection start time. This endpoint accepts an inspection request ID and starts the linked inspection.
+        
+        **Requirements:**
+        - Inspection request must be assigned to the current inspector
+        - Inspection request must have a linked inspection (inspectionId must be set)
+        - Linked inspection must be in 'draft' status
+        - Inspection request status must be 'assigned' or 'pending'
+        - Inspection must not already have a start time
+        
+        **Timing Fields:**
+        - `inspectionStartTime`: Set to current timestamp when this endpoint is called
+        - `inspectionEndTime`: Automatically set when inspection status changes to 'completed' or 'submitted'
+        - `timeTaken`: Automatically calculated in seconds when inspection is completed/submitted
+        
+        **Inspection Request Update:**
+        - The inspection request status will be automatically updated to 'in_progress'
+      parameters:
+        - $ref: '#/components/parameters/InspectionRequestId'
+      responses:
+        '200':
+          description: Inspection started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectionResponse'
+              example:
+                success: true
+                message: "Inspection started successfully"
+                data:
+                  inspection:
+                    id: "6982423e08f0b75b8f18c9de"
+                    inspectionStartTime: "2026-02-09T20:53:50.614Z"
+                    status: "draft"
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2315,6 +2446,25 @@ components:
           type: string
           example: Silver
 
+    VehicleInfoOptional:
+      type: object
+      description: Optional vehicle info for inspection. All properties optional; {} or omit when not provided.
+      properties:
+        make:
+          type: string
+        model:
+          type: string
+        year:
+          type: integer
+        vin:
+          type: string
+        licensePlate:
+          type: string
+        mileage:
+          type: integer
+        color:
+          type: string
+
     ChecklistItemResponse:
       type: object
       required:
@@ -2322,80 +2472,101 @@ components:
         - label
         - status
         - rating
+      description: A single checklist item within an inspection type (e.g. "Front Windshield Glass" under Exterior).
       properties:
         position:
           type: integer
+          minimum: 1
           example: 1
         label:
           type: string
-          example: Paint Condition
+          example: Front Windshield Glass
         status:
           type: string
-          enum: [Excellent, Good, Average, Poor]
+          enum: [Excellent, Good, Average, Poor, Fair, "Not Checked"]
           example: Excellent
         rating:
-          type: integer
-          enum: [4, 3, 2, 1]
-          description: Must match status (Excellent=4, Good=3, Average=2, Poor=1)
+          type: number
+          minimum: 0
+          maximum: 5
+          description: Numeric rating 0–5 (decimals allowed, e.g. 3.5, 4.5)
           example: 4
         remarks:
           type: string
-          example: Paint is in perfect condition
+          maxLength: 1000
+          nullable: true
+          description: May be null; stored as empty string when null.
         photos:
           type: array
           items:
             type: string
             format: uri
-          example: ["https://example.com/photos/paint1.jpg"]
+          description: URLs from presigned/multipart upload. May be empty array.
+          example: []
 
     InspectionTypeResponse:
       type: object
       required:
         - typeName
         - checklistItems
+      description: One inspection type (e.g. Exterior, Engine) with its checklist items.
       properties:
         typeName:
           type: string
+          description: The inspection type (must match a type from the template).
           example: Exterior
         checklistItems:
           type: array
+          description: Checklist items for this type. Count and order must match the template for this typeName.
           items:
             $ref: '#/components/schemas/ChecklistItemResponse'
         overallRemarks:
           type: string
-          example: Exterior is in excellent condition overall
+          maxLength: 2000
+          nullable: true
+          description: May be null; stored as empty string when null.
         overallPhotos:
           type: array
           items:
             type: string
             format: uri
-          example: ["https://example.com/photos/exterior1.jpg"]
+          description: May be empty array.
+          example: []
         videos:
           type: array
           items:
             type: string
             format: uri
-          description: Only for Interior and Exterior types, max 2
-          example: ["https://example.com/videos/exterior1.mp4"]
+          description: Only for Interior and Exterior types, max per template. May be empty array.
+          example: []
         averageRating:
           type: number
           format: float
-          example: 3.67
+          minimum: 0
+          maximum: 5
+          description: Computed from checklist item ratings; may be sent by client or recalculated on save.
+          example: 3.9
 
     CreateInspectionRequest:
       type: object
       required:
         - checklistTemplateId
-        - vehicleInfo
         - types
       properties:
         checklistTemplateId:
           type: string
-          example: "507f1f77bcf86cd799439020"
+          example: "6982423e08f0b75b8f18c9de"
+        inspectionRequestId:
+          type: string
+          description: Optional. When provided, the related inspection request is set to status `completed` and linked to this inspection (request must be assigned to the current inspector and in `assigned` or `in_progress`).
+          example: "507f1f77bcf86cd799439011"
         vehicleInfo:
-          $ref: '#/components/schemas/VehicleInfo'
+          $ref: '#/components/schemas/VehicleInfoOptional'
+          description: Optional. Can be empty object {} or omitted.
         types:
           type: array
+          description: One entry per inspection type (typeName + checklistItems for that type). Must include all types defined in the template.
+          minItems: 1
           items:
             $ref: '#/components/schemas/InspectionTypeResponse'
         status:
@@ -2405,21 +2576,34 @@ components:
         inspectionDate:
           type: string
           format: date-time
+          description: Optional. Defaults to current time.
+          example: "2026-02-09T20:53:50.614"
         notes:
           type: string
+          maxLength: 5000
+          nullable: true
+          description: Optional. May be null.
 
     UpdateInspectionRequest:
       type: object
+      minProperties: 1
       properties:
         types:
           type: array
+          description: Same structure as create – each item has typeName (inspection type) and checklistItems for that type.
           items:
             $ref: '#/components/schemas/InspectionTypeResponse'
         status:
           type: string
           enum: [draft, completed, submitted]
+        inspectionDate:
+          type: string
+          format: date-time
+          nullable: true
         notes:
           type: string
+          maxLength: 5000
+          nullable: true
 
     Inspection:
       type: object
@@ -2436,7 +2620,7 @@ components:
             - type: string
             - $ref: '#/components/schemas/User'
         vehicleInfo:
-          $ref: '#/components/schemas/VehicleInfo'
+          $ref: '#/components/schemas/VehicleInfoOptional'
         types:
           type: array
           items:
@@ -2444,6 +2628,8 @@ components:
         overallRating:
           type: number
           format: float
+          minimum: 0
+          maximum: 5
           example: 3.56
         status:
           type: string
@@ -2455,8 +2641,26 @@ components:
           type: string
           format: date-time
           nullable: true
+        inspectionStartTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the inspection was started (set via /start endpoint)
+          example: "2026-02-09T20:53:50.614Z"
+        inspectionEndTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the inspection was completed/submitted (automatically set)
+          example: "2026-02-09T21:15:30.123Z"
+        timeTaken:
+          type: integer
+          nullable: true
+          description: Time taken to complete the inspection in seconds (automatically calculated)
+          example: 1320
         notes:
           type: string
+          nullable: true
         createdAt:
           type: string
           format: date-time

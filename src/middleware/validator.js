@@ -286,6 +286,9 @@ const schemas = {
     checklistTemplateId: Joi.string().required().messages({
       'any.required': 'Checklist template ID is required'
     }),
+    inspectionRequestId: Joi.string().optional().messages({
+      'string.base': 'Inspection request ID must be a string'
+    }),
     vehicleInfo: Joi.object({
       make: Joi.string().max(50).trim().allow('').optional().messages({
         'string.max': 'Make cannot exceed 50 characters'
@@ -332,13 +335,13 @@ const schemas = {
               'any.only': `Status must be one of: ${Object.values(CHECKLIST_STATUS).join(', ')}`,
               'any.required': 'Status is required'
             }),
-            rating: Joi.number().integer().min(1).max(4).required().messages({
+            rating: Joi.number().min(0).max(5).required().messages({
               'number.base': 'Rating must be a number',
-              'number.min': 'Rating must be at least 1',
-              'number.max': 'Rating must be at most 4',
+              'number.min': 'Rating must be at least 0',
+              'number.max': 'Rating must be at most 5',
               'any.required': 'Rating is required'
             }),
-            remarks: Joi.string().max(1000).trim().allow('').optional().messages({
+            remarks: Joi.string().max(1000).trim().allow('', null).optional().messages({
               'string.max': 'Remarks cannot exceed 1000 characters'
             }),
             photos: Joi.array().items(Joi.string()).max(20).optional().messages({
@@ -349,7 +352,7 @@ const schemas = {
           'array.min': 'At least one checklist item is required per type',
           'any.required': 'Checklist items are required'
         }),
-        overallRemarks: Joi.string().max(2000).trim().allow('').optional().messages({
+        overallRemarks: Joi.string().max(2000).trim().allow('', null).optional().messages({
           'string.max': 'Overall remarks cannot exceed 2000 characters'
         }),
         overallPhotos: Joi.array().items(Joi.string()).max(30).optional().messages({
@@ -367,7 +370,7 @@ const schemas = {
       'any.only': 'Status must be one of: draft, completed, submitted'
     }),
     inspectionDate: Joi.date().optional(),
-    notes: Joi.string().max(5000).trim().allow('').optional().messages({
+    notes: Joi.string().max(5000).trim().allow('', null).optional().messages({
       'string.max': 'Notes cannot exceed 5000 characters'
     })
   }),
@@ -390,18 +393,18 @@ const schemas = {
             position: Joi.number().integer().min(1).required(),
             label: Joi.string().required(),
             status: Joi.string().valid(...Object.values(CHECKLIST_STATUS)).required(),
-            rating: Joi.number().integer().min(1).max(4).required(),
-            remarks: Joi.string().max(1000).trim().allow('').optional(),
+            rating: Joi.number().min(0).max(5).required(),
+            remarks: Joi.string().max(1000).trim().allow('', null).optional(),
             photos: Joi.array().items(Joi.string()).max(20).optional()
           })
         ).min(1).required(),
-        overallRemarks: Joi.string().max(2000).trim().allow('').optional(),
+        overallRemarks: Joi.string().max(2000).trim().allow('', null).optional(),
         overallPhotos: Joi.array().items(Joi.string()).max(30).optional(),
         videos: Joi.array().items(Joi.string()).max(2).optional()
       })
     ).min(1).optional(),
     status: Joi.string().valid('draft', 'completed', 'submitted').optional(),
-    notes: Joi.string().max(5000).trim().allow('').optional()
+    notes: Joi.string().max(5000).trim().allow('', null).optional()
   }).min(1).messages({
     'object.min': 'At least one field must be provided for update'
   }),
@@ -558,10 +561,13 @@ const schemas = {
   }),
 
   // Presigned S3 upload URL – folder by inspection type (Interior, Exterior, Engine, etc.)
+  // Allow either inspectionId or inspectionRequestId to support both flows
   presignedUploadUrl: Joi.object({
-    inspectionId: Joi.string().min(1).max(50).trim().required().messages({
-      'any.required': 'inspectionId is required',
+    inspectionId: Joi.string().min(1).max(50).trim().optional().messages({
       'string.max': 'inspectionId cannot exceed 50 characters'
+    }),
+    inspectionRequestId: Joi.string().min(1).max(50).trim().optional().messages({
+      'string.max': 'inspectionRequestId cannot exceed 50 characters'
     }),
     typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required().messages({
       'any.required': 'typeName is required (e.g. Interior, Exterior, Engine)',
@@ -581,7 +587,7 @@ const schemas = {
       'number.min': 'expiresIn must be at least 60 seconds',
       'number.max': 'expiresIn cannot exceed 14400 seconds (4h for video)'
     })
-  }),
+  }).or('inspectionId', 'inspectionRequestId'),
 
   // Multipart upload init (large videos – 10+ min). Bucket folders by type.
   multipartUploadInit: Joi.object({

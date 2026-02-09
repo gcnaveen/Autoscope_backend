@@ -5,7 +5,7 @@
  */
 
 const mongoose = require('mongoose');
-const { CHECKLIST_STATUS, STATUS_RATING_MAP, VIDEO_ALLOWED_TYPES } = require('../config/constants');
+const { CHECKLIST_STATUS, VIDEO_ALLOWED_TYPES } = require('../config/constants');
 
 // Sub-schema for checklist item response
 const checklistItemResponseSchema = new mongoose.Schema({
@@ -23,28 +23,22 @@ const checklistItemResponseSchema = new mongoose.Schema({
     required: [true, 'Status is required'],
     enum: {
       values: Object.values(CHECKLIST_STATUS),
-      message: 'Invalid status. Must be one of: Excellent, Good, Average, Poor'
+      message: `Invalid status. Must be one of: ${Object.values(CHECKLIST_STATUS).join(', ')}`
     }
   },
   rating: {
     type: Number,
-    required: [true, 'Rating is required'],
-    min: [1, 'Rating must be at least 1'],
-    max: [4, 'Rating must be at most 4'],
-    validate: {
-      validator: function(rating) {
-        // Rating should match status
-        const expectedRating = STATUS_RATING_MAP[this.status];
-        return rating === expectedRating;
-      },
-      message: 'Rating does not match the selected status'
-    }
+    required: false,
+    min: [0, 'Rating must be at least 0'],
+    max: [5, 'Rating must be at most 5'],
+    default: 0
   },
   remarks: {
     type: String,
     trim: true,
     maxlength: [1000, 'Remarks cannot exceed 1000 characters'],
-    default: ''
+    default: '',
+    set: function(v) { return v == null ? '' : v; }
   },
   photos: {
     type: [String], // Array of photo URLs/paths
@@ -79,7 +73,8 @@ const typeInspectionSchema = new mongoose.Schema({
     type: String,
     trim: true,
     maxlength: [2000, 'Overall remarks cannot exceed 2000 characters'],
-    default: ''
+    default: '',
+    set: function(v) { return v == null ? '' : v; }
   },
   overallPhotos: {
     type: [String], // Array of photo URLs/paths
@@ -111,9 +106,9 @@ const typeInspectionSchema = new mongoose.Schema({
   },
   averageRating: {
     type: Number,
-    required: true,
-    min: [1, 'Average rating must be at least 1'],
-    max: [4, 'Average rating must be at most 4'],
+    default: 0,
+    min: [0, 'Average rating must be at least 0'],
+    max: [5, 'Average rating must be at most 5'],
     set: function(value) {
       // Round to 2 decimal places
       return Math.round(value * 100) / 100;
@@ -135,7 +130,7 @@ const inspectionSchema = new mongoose.Schema({
     required: [true, 'Inspector ID is required'],
     index: true
   },
-  vehicleInfo: {
+  vehicleInfo: {  
     make: {
       type: String,
       trim: true,
@@ -185,9 +180,9 @@ const inspectionSchema = new mongoose.Schema({
   },
   overallRating: {
     type: Number,
-    required: true,
-    min: [1, 'Overall rating must be at least 1'],
-    max: [4, 'Overall rating must be at most 4'],
+    default: 0,
+    min: [0, 'Overall rating must be at least 0'],
+    max: [5, 'Overall rating must be at most 5'],
     set: function(value) {
       // Round to 2 decimal places
       return Math.round(value * 100) / 100;
@@ -208,11 +203,13 @@ const inspectionSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  
   notes: {
     type: String,
     trim: true,
     maxlength: [5000, 'Notes cannot exceed 5000 characters'],
-    default: ''
+    default: '',
+    set: function(v) { return v == null ? '' : v; }
   }
 }, {
   timestamps: true,
@@ -260,6 +257,14 @@ inspectionSchema.pre('save', function(next) {
   // Set completedAt if status is completed or submitted
   if ((this.status === 'completed' || this.status === 'submitted') && !this.completedAt) {
     this.completedAt = new Date();
+  }
+
+  // Calculate timeTaken when inspection is completed or submitted
+  if ((this.status === 'completed' || this.status === 'submitted') && this.inspectionStartTime && !this.inspectionEndTime) {
+    this.inspectionEndTime = new Date();
+    // Calculate time taken in seconds
+    const timeDiffMs = this.inspectionEndTime.getTime() - this.inspectionStartTime.getTime();
+    this.timeTaken = Math.round(timeDiffMs / 1000); // Convert to seconds
   }
 
   next();

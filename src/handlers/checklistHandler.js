@@ -15,7 +15,8 @@ const {
   getInspectionById,
   getAllInspections,
   updateInspection,
-  deleteInspection
+  deleteInspection,
+  startInspection
 } = require('../controllers/checklistController');
 const {
   getPresignedUploadUrl: getPresignedUploadUrlController,
@@ -321,3 +322,22 @@ exports.deleteInspection = asyncHandler(async (event) => {
   // Delete inspection
   return await deleteInspection(inspectionId, currentUser);
 });
+
+/**
+ * Start inspection by inspection ID (inspector only)
+ * POST /api/checklists/inspections/{id}/start
+ * Sets inspection start time and updates linked inspection request status to in_progress
+ */
+exports.startInspection = asyncHandler(async (event) => {
+  await initDB();
+  
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR)(event);
+  
+  const inspectionRequestId = event.pathParameters?.id;
+  if (!inspectionRequestId) {
+    throw new BadRequestError('Inspection ID is required');
+  }
+  
+  return await startInspection(inspectionRequestId, currentUser);
+});
+
