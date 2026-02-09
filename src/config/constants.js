@@ -55,5 +55,9 @@ module.exports = {
   },
 
   // Types that allow video uploads
-  VIDEO_ALLOWED_TYPES: ['Interior', 'Exterior']
+  VIDEO_ALLOWED_TYPES: ['Interior', 'Exterior'],
+
+  // S3 bucket for inspection images and videos
+  S3_BUCKET: process.env.S3_BUCKET || 'autoscopedev',
+  AWS_REGION: process.env.AWS_REGION || 'ap-south-1'
 };

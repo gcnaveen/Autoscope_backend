@@ -38,6 +38,8 @@ tags:
     description: Admin dashboard statistics
   - name: Contact
     description: Contact us form (public)
+  - name: Upload
+    description: S3 presigned and multipart upload (images/videos by inspection type – bucket autoscopedev)
 
 security:
   - bearerAuth: []
@@ -209,6 +211,172 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ContactSubmissionsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ============================================
+  # Upload – S3 presigned & multipart (bucket: autoscopedev, folders by type)
+  # ============================================
+  /api/upload/presigned-url:
+    post:
+      tags:
+        - Upload
+      summary: Get presigned upload URL (Inspector or Admin)
+      description: |
+        Returns a presigned **PUT** URL and **fileUrl**. Use for **photos** and **small videos**.
+        S3 path: `uploads/inspections/{inspectionId}/{typeName}/photos|videos/{uuid}-{fileName}`.
+        Client PUTs file to uploadUrl, then uses fileUrl in inspection payload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignedUploadUrlRequest'
+      responses:
+        '200':
+          description: Presigned URL generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedUploadUrlResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/upload/multipart/init:
+    post:
+      tags:
+        - Upload
+      summary: Init multipart upload (large videos – 10+ min)
+      description: |
+        Start a multipart upload for **videos**. Returns uploadId, key, fileUrl.
+        Then call part-urls to get per-part URLs, upload each part, then complete with ETags.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultipartInitRequest'
+      responses:
+        '200':
+          description: Multipart upload initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartInitResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/upload/multipart/part-urls:
+    post:
+      tags:
+        - Upload
+      summary: Get presigned URLs for multipart parts
+      description: Get presigned PUT URLs for one or more parts. Client uploads each part and captures ETag for complete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultipartPartUrlsRequest'
+      responses:
+        '200':
+          description: Part URLs generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartPartUrlsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/upload/multipart/complete:
+    post:
+      tags:
+        - Upload
+      summary: Complete multipart upload
+      description: Submit part ETags from uploads. Returns final fileUrl for inspection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultipartCompleteRequest'
+      responses:
+        '200':
+          description: Multipart upload completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartCompleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/upload/multipart/abort:
+    post:
+      tags:
+        - Upload
+      summary: Abort multipart upload
+      description: Cancel an in-progress multipart upload. Optional cleanup.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultipartAbortRequest'
+      responses:
+        '200':
+          description: Multipart upload aborted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultipartAbortResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/upload/delete:
+    post:
+      tags:
+        - Upload
+      summary: Delete image or video from S3 (Inspector or Admin)
+      description: |
+        Remove a file from the bucket. Provide **key** (S3 object key) or **fileUrl** (the URL stored in the inspection).
+        Only keys under `uploads/inspections/` can be deleted. After deleting, remove the URL from the inspection document (update inspection without that URL in photos/videos).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteMediaRequest'
+      responses:
+        '200':
+          description: Media deleted from S3
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteMediaResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1661,6 +1829,274 @@ components:
                 is_assigned: { type: boolean }
                 createdAt: { type: string, format: date-time }
                 updatedAt: { type: string, format: date-time }
+
+    # Upload (S3 – bucket autoscopedev, folders by inspection type)
+    PresignedUploadUrlRequest:
+      type: object
+      required:
+        - inspectionId
+        - typeName
+        - fileName
+        - contentType
+      properties:
+        inspectionId:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Inspection document ID
+          example: "507f1f77bcf86cd799439011"
+        typeName:
+          type: string
+          enum:
+            - Exterior
+            - Interior
+            - Engine
+            - "Light Conditions and Operations"
+            - "Transmission and Drivetrain"
+            - Chasis
+            - "Tyre and Breaks"
+            - "Overall Safety Feature"
+            - Entertainment
+            - "Drive and Passenger Experience"
+          description: Inspection type (folder name in S3)
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: exterior-photo.jpg
+        contentType:
+          type: string
+          description: image/jpeg, image/png, image/gif, image/webp; or video/mp4, video/quicktime, video/webm
+          example: image/jpeg
+        mediaType:
+          type: string
+          enum: [photos, videos]
+          description: Optional; default derived from contentType
+        expiresIn:
+          type: integer
+          minimum: 60
+          maximum: 14400
+          description: URL expiry seconds (default 900 photos, 7200 video)
+
+    PresignedUploadUrlResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uploadUrl:
+              type: string
+              description: PUT file here
+            fileUrl:
+              type: string
+              description: Use in inspection photos/videos array
+            key:
+              type: string
+              description: S3 object key
+
+    MultipartInitRequest:
+      type: object
+      required:
+        - inspectionId
+        - typeName
+        - fileName
+        - contentType
+      properties:
+        inspectionId:
+          type: string
+          minLength: 1
+          maxLength: 50
+        typeName:
+          type: string
+          enum:
+            - Exterior
+            - Interior
+            - Engine
+            - "Light Conditions and Operations"
+            - "Transmission and Drivetrain"
+            - Chasis
+            - "Tyre and Breaks"
+            - "Overall Safety Feature"
+            - Entertainment
+            - "Drive and Passenger Experience"
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contentType:
+          type: string
+          enum: [video/mp4, video/quicktime, video/webm]
+
+    MultipartInitResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            uploadId:
+              type: string
+            key:
+              type: string
+            fileUrl:
+              type: string
+
+    MultipartPartUrlsRequest:
+      type: object
+      required:
+        - key
+        - uploadId
+        - partNumbers
+      properties:
+        key:
+          type: string
+          description: From init response
+        uploadId:
+          type: string
+          description: From init response
+        partNumbers:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 10000
+          description: e.g. [1, 2, 3]
+        expiresIn:
+          type: integer
+          minimum: 300
+          maximum: 3600
+          description: Part URL expiry in seconds (default 3600)
+
+    MultipartPartUrlsResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            parts:
+              type: array
+              items:
+                type: object
+                properties:
+                  partNumber:
+                    type: integer
+                  uploadUrl:
+                    type: string
+
+    MultipartCompleteRequest:
+      type: object
+      required:
+        - key
+        - uploadId
+        - parts
+      properties:
+        key:
+          type: string
+        uploadId:
+          type: string
+        parts:
+          type: array
+          items:
+            type: object
+            required:
+              - partNumber
+              - etag
+            properties:
+              partNumber:
+                type: integer
+                minimum: 1
+                maximum: 10000
+              etag:
+                type: string
+                description: ETag from part PUT response
+
+    MultipartCompleteResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            fileUrl:
+              type: string
+            key:
+              type: string
+
+    MultipartAbortRequest:
+      type: object
+      required:
+        - key
+        - uploadId
+      properties:
+        key:
+          type: string
+        uploadId:
+          type: string
+
+    MultipartAbortResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            aborted:
+              type: boolean
+              example: true
+
+    DeleteMediaRequest:
+      type: object
+      description: Provide key or fileUrl (one required). Only uploads/inspections/ keys allowed.
+      properties:
+        key:
+          type: string
+          maxLength: 700
+          description: S3 object key (e.g. from upload response)
+        fileUrl:
+          type: string
+          format: uri
+          maxLength: 2000
+          description: Full URL stored in inspection (photos/videos array)
+
+    DeleteMediaResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+          example: 200
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            deleted:
+              type: boolean
+              example: true
+            key:
+              type: string
+              description: Deleted object key
 
     # Checklist Template Schemas
     ChecklistItem:

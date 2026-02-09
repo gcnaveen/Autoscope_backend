@@ -30,6 +30,20 @@ exports.handler = asyncHandler(async (event) => {
     `${event.requestContext?.http?.method || ''} ${event.requestContext?.http?.path || ''}`.trim();
 
   switch (routeKey) {
+    // Upload: presigned + multipart (bucket: autoscopedev, folders by type)
+    case 'POST /api/upload/presigned-url':
+      return checklistHandler.getPresignedUploadUrl(event);
+    case 'POST /api/upload/multipart/init':
+      return checklistHandler.initMultipartUpload(event);
+    case 'POST /api/upload/multipart/part-urls':
+      return checklistHandler.getMultipartPartUrls(event);
+    case 'POST /api/upload/multipart/complete':
+      return checklistHandler.completeMultipart(event);
+    case 'POST /api/upload/multipart/abort':
+      return checklistHandler.abortMultipart(event);
+    case 'POST /api/upload/delete':
+      return checklistHandler.deleteMedia(event);
+
     // Template routes
     case 'POST /api/checklists/templates':
       return checklistHandler.createTemplate(event);

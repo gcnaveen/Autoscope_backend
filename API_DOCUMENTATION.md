@@ -1686,6 +1686,96 @@ Authorization: Bearer <admin-token>
 
 ---
 
+### 5.5 Upload – Inspection images and videos (S3 bucket: autoscopedev)
+
+Inspection **photos** and **videos** are stored in the S3 bucket **autoscopedev** in **folders by inspection type** (Interior, Exterior, Engine, etc.) so media is organized as:
+
+`uploads/inspections/{inspectionId}/{typeName}/photos/` or `.../videos/`
+
+- **Photos and short videos:** use **presigned PUT** (single request). For videos we use a longer expiry (up to 4h) so 10+ min uploads have time.
+- **Long videos (10+ min):** use **multipart upload** so the client uploads in chunks; the API only issues URLs and completes the upload. No large payload through Lambda, so it stays fast.
+
+All upload endpoints require **Inspector or Admin**.
+
+---
+
+#### Get presigned upload URL (single PUT – photos or small videos)
+**POST** `/api/upload/presigned-url`
+
+Returns a presigned **PUT** URL and the **file URL**. Use for photos and small videos. Key path: `uploads/inspections/{inspectionId}/{typeName}/photos|videos/{uuid}-{fileName}`.
+
+**Headers:** `Authorization: Bearer <inspector-or-admin-token>`
+
+**Request Body:**
+```json
+{
+  "inspectionId": "507f1f77bcf86cd799439011",
+  "typeName": "Exterior",
+  "fileName": "exterior-photo.jpg",
+  "contentType": "image/jpeg",
+  "mediaType": "photos",
+  "expiresIn": 7200
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| inspectionId | string | Yes | Inspection document ID (max 50 chars) |
+| typeName | string | Yes | One of: Exterior, Interior, Engine, Light Conditions and Operations, Transmission and Drivetrain, Chasis, Tyre and Breaks, Overall Safety Feature, Entertainment, Drive and Passenger Experience |
+| fileName | string | Yes | Original filename (max 255 chars) |
+| contentType | string | Yes | image/jpeg, image/png, image/gif, image/webp; or video/mp4, video/quicktime, video/webm |
+| mediaType | string | No | `photos` or `videos`; default derived from contentType |
+| expiresIn | number | No | 60–14400 sec. Default: 15 min (photos), 2 h (videos) |
+
+**Response (200):** `data.uploadUrl`, `data.fileUrl`, `data.key`. PUT file to `uploadUrl`, then use `fileUrl` in inspection `photos`/`overallPhotos`/`videos`.
+
+**Errors:** 400 (validation/typeName), 401, 403.
+
+---
+
+#### Multipart upload for large videos (10+ min)
+
+Use multipart so the client uploads chunks directly to S3; the API only returns URLs and completes the upload. Saves time and avoids large payloads through Lambda.
+
+**1. Init multipart upload**  
+**POST** `/api/upload/multipart/init`
+
+**Body:** `inspectionId`, `typeName`, `fileName`, `contentType` (video/mp4 | video/quicktime | video/webm).
+
+**Response (200):** `data.uploadId`, `data.key`, `data.fileUrl`. Store `uploadId` and `key` for the next steps.
+
+**2. Get part URL(s)**  
+**POST** `/api/upload/multipart/part-urls`
+
+**Body:** `key`, `uploadId`, `partNumbers` (e.g. `[1, 2, 3]`), optional `expiresIn`.
+
+**Response (200):** `data.parts`: `[{ partNumber, uploadUrl }, ...]`. Client PUTs each part (5MB–5GB per part, except last). Capture the **ETag** from each part response.
+
+**3. Complete multipart upload**  
+**POST** `/api/upload/multipart/complete`
+
+**Body:** `key`, `uploadId`, `parts`: `[{ partNumber, etag }]` (etag from step 2).
+
+**Response (200):** `data.fileUrl` – use this in the inspection `videos` array.
+
+**4. Abort (optional)**  
+**POST** `/api/upload/multipart/abort`  
+**Body:** `key`, `uploadId`. Call if the client cancels the upload.
+
+**5. Delete image or video from S3**  
+**POST** `/api/upload/delete`  
+
+Remove a file from the bucket (Inspector or Admin). Send **either** the S3 **key** or the **fileUrl** (the URL stored in the inspection):
+
+- **key** – S3 object key (e.g. `uploads/inspections/507f.../Exterior/photos/uuid-photo.jpg`)
+- **fileUrl** – Full URL (e.g. `https://autoscopedev.s3.ap-south-1.amazonaws.com/uploads/inspections/.../photo.jpg`)
+
+Only keys under `uploads/inspections/` can be deleted. After deleting from S3, update the inspection (PUT) and remove that URL from the relevant `photos`, `overallPhotos`, or `videos` array so the report no longer references it.
+
+**Bucket:** S3_BUCKET env (default `autoscopedev`). Folders by type: `uploads/inspections/{inspectionId}/{typeName}/videos/`.
+
+---
+
 ## 6. Admin Dashboard API
 
 ### 6.1 Get Admin Dashboard Data

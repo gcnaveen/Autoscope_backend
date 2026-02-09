@@ -557,6 +557,100 @@ const schemas = {
     })
   }),
 
+  // Presigned S3 upload URL – folder by inspection type (Interior, Exterior, Engine, etc.)
+  presignedUploadUrl: Joi.object({
+    inspectionId: Joi.string().min(1).max(50).trim().required().messages({
+      'any.required': 'inspectionId is required',
+      'string.max': 'inspectionId cannot exceed 50 characters'
+    }),
+    typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required().messages({
+      'any.required': 'typeName is required (e.g. Interior, Exterior, Engine)',
+      'any.only': `typeName must be one of: ${Object.values(INSPECTION_TYPES).join(', ')}`
+    }),
+    fileName: Joi.string().min(1).max(255).trim().required().messages({
+      'any.required': 'fileName is required',
+      'string.max': 'fileName cannot exceed 255 characters'
+    }),
+    contentType: Joi.string().min(1).max(100).trim().required().messages({
+      'any.required': 'contentType is required'
+    }),
+    mediaType: Joi.string().valid('photos', 'videos').optional().messages({
+      'any.only': 'mediaType must be photos or videos (default: derived from contentType)'
+    }),
+    expiresIn: Joi.number().integer().min(60).max(14400).optional().messages({
+      'number.min': 'expiresIn must be at least 60 seconds',
+      'number.max': 'expiresIn cannot exceed 14400 seconds (4h for video)'
+    })
+  }),
+
+  // Multipart upload init (large videos – 10+ min). Bucket folders by type.
+  multipartUploadInit: Joi.object({
+    inspectionId: Joi.string().min(1).max(50).trim().required().messages({
+      'any.required': 'inspectionId is required'
+    }),
+    typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required().messages({
+      'any.required': 'typeName is required',
+      'any.only': `typeName must be one of: ${Object.values(INSPECTION_TYPES).join(', ')}`
+    }),
+    fileName: Joi.string().min(1).max(255).trim().required().messages({
+      'any.required': 'fileName is required'
+    }),
+    contentType: Joi.string().valid('video/mp4', 'video/quicktime', 'video/webm').required().messages({
+      'any.required': 'contentType is required for video'
+    })
+  }),
+
+  // Presigned URL(s) for multipart part(s)
+  multipartPartUrls: Joi.object({
+    key: Joi.string().min(1).max(600).trim().required().messages({
+      'any.required': 'key from init response is required'
+    }),
+    uploadId: Joi.string().min(1).max(200).trim().required().messages({
+      'any.required': 'uploadId from init response is required'
+    }),
+    partNumbers: Joi.array().items(Joi.number().integer().min(1).max(10000)).min(1).max(10000).required().messages({
+      'any.required': 'partNumbers array is required (e.g. [1,2,3])'
+    }),
+    expiresIn: Joi.number().integer().min(300).max(3600).optional()
+  }),
+
+  // Complete multipart upload
+  multipartComplete: Joi.object({
+    key: Joi.string().min(1).max(600).trim().required(),
+    uploadId: Joi.string().min(1).max(200).trim().required(),
+    parts: Joi.array().items(
+      Joi.object({
+        partNumber: Joi.number().integer().min(1).max(10000).required(),
+        etag: Joi.string().min(1).trim().required()
+      })
+    ).min(1).max(10000).required()
+  }),
+
+  // Abort multipart upload
+  multipartAbort: Joi.object({
+    key: Joi.string().min(1).max(600).trim().required(),
+    uploadId: Joi.string().min(1).max(200).trim().required()
+  }),
+
+  // Delete image/video from S3 (inspector/admin). Provide key or fileUrl (one required).
+  deleteMedia: Joi.object({
+    key: Joi.string().min(1).max(700).trim().optional().messages({
+      'string.max': 'key cannot exceed 700 characters'
+    }),
+    fileUrl: Joi.string().uri().max(2000).trim().optional().messages({
+      'string.uri': 'fileUrl must be a valid URL'
+    })
+  }).custom((value, helpers) => {
+    const key = (value.key || '').toString().trim();
+    const fileUrl = (value.fileUrl || '').toString().trim();
+    if (!key && !fileUrl) {
+      return helpers.error('object.deleteMediaRequired');
+    }
+    return value;
+  }).messages({
+    'object.deleteMediaRequired': 'Either key or fileUrl is required'
+  }),
+
   // Contact Us form: name required, either email or number required, message optional
   contactUs: Joi.object({
     name: Joi.string().min(2).max(100).trim().required().messages({

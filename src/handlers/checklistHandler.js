@@ -17,6 +17,14 @@ const {
   updateInspection,
   deleteInspection
 } = require('../controllers/checklistController');
+const {
+  getPresignedUploadUrl: getPresignedUploadUrlController,
+  initMultipartUpload: initMultipartUploadController,
+  getMultipartPartUrls: getMultipartPartUrlsController,
+  completeMultipart: completeMultipartController,
+  abortMultipart: abortMultipartController,
+  deleteMedia: deleteMediaController
+} = require('../controllers/uploadController');
 const { authenticate, authorize } = require('../middleware/auth');
 const { schemas, validate } = require('../middleware/validator');
 const { USER_ROLES } = require('../config/constants');
@@ -33,6 +41,73 @@ const initDB = async () => {
     dbConnected = true;
   }
 };
+
+/**
+ * Get presigned S3 upload URL – folder by type (Interior, Exterior, Engine, etc.)
+ * POST /api/upload/presigned-url
+ * Body: { inspectionId, typeName, fileName, contentType, mediaType?, expiresIn? }
+ */
+exports.getPresignedUploadUrl = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.presignedUploadUrl)(event);
+  return await getPresignedUploadUrlController(params, currentUser);
+});
+
+/**
+ * Init multipart upload for large videos (10+ min). Folder by type.
+ * POST /api/upload/multipart/init
+ */
+exports.initMultipartUpload = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.multipartUploadInit)(event);
+  return await initMultipartUploadController(params, currentUser);
+});
+
+/**
+ * Get presigned URLs for multipart parts.
+ * POST /api/upload/multipart/part-urls
+ */
+exports.getMultipartPartUrls = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.multipartPartUrls)(event);
+  return await getMultipartPartUrlsController(params, currentUser);
+});
+
+/**
+ * Complete multipart upload.
+ * POST /api/upload/multipart/complete
+ */
+exports.completeMultipart = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.multipartComplete)(event);
+  return await completeMultipartController(params, currentUser);
+});
+
+/**
+ * Abort multipart upload.
+ * POST /api/upload/multipart/abort
+ */
+exports.abortMultipart = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.multipartAbort)(event);
+  return await abortMultipartController(params, currentUser);
+});
+
+/**
+ * Delete image or video from S3 (inspector or admin).
+ * POST /api/upload/delete – body: { key } or { fileUrl }
+ */
+exports.deleteMedia = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.deleteMedia)(event);
+  return await deleteMediaController(params, currentUser);
+});
 
 /**
  * Create template handler (admin only)
