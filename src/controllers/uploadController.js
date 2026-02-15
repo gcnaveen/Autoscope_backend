@@ -69,11 +69,23 @@ const deleteMedia = async (params, currentUser) => {
   });
 };
 
+/**
+ * Simple image upload – same as presigned-url but no inspectionId/typeName; images only.
+ */
+const getSimpleImageUploadUrl = async (params, currentUser) => {
+  const result = await uploadService.getSimpleImageUploadUrl(params, currentUser);
+  return success({
+    message: 'Presigned URL generated. Upload with PUT to uploadUrl, then use fileUrl.',
+    data: result
+  });
+};
+
 module.exports = {
   getPresignedUploadUrl,
   initMultipartUpload,
   getMultipartPartUrls,
   completeMultipart,
   abortMultipart,
-  deleteMedia
+  deleteMedia,
+  getSimpleImageUploadUrl
 };

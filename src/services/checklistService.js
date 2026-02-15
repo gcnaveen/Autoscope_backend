@@ -6,6 +6,7 @@
 
 const ChecklistTemplate = require('../models/ChecklistTemplate');
 const Inspection = require('../models/Inspection');
+const InspectionRequest = require('../models/InspectionRequest');
 const {
   NotFoundError,
   ConflictError,
@@ -13,8 +14,35 @@ const {
   ForbiddenError,
   DatabaseError
 } = require('../utils/errors');
-const { INSPECTION_TYPES, VIDEO_ALLOWED_TYPES } = require('../config/constants');
+const { INSPECTION_TYPES, VIDEO_ALLOWED_TYPES, STATUS_RATING_MAP, USER_ROLES } = require('../config/constants');
 const logger = require('../utils/logger');
+
+/** Derive rating from status when rating is null (e.g. Not Applicable -> 0). Excellent=5, Good=4, Average=3, Poor=1. */
+function resolveItemRating(item) {
+  const num = item.rating != null ? Number(item.rating) : NaN;
+  if (Number.isFinite(num) && num >= 0 && num <= 5) return Math.round(num * 100) / 100;
+  return STATUS_RATING_MAP[item.status] ?? 0;
+}
+
+/** Normalize types array: ensure each checklist item has a numeric rating (from status when null). Preserves schema shape. */
+function normalizeTypesRatings(types) {
+  if (!Array.isArray(types)) return types;
+  return types.map(type => ({
+    typeName: type.typeName,
+    checklistItems: (type.checklistItems || []).map(item => ({
+      position: item.position,
+      label: item.label,
+      status: item.status,
+      rating: resolveItemRating(item),
+      remarks: item.remarks != null ? String(item.remarks) : '',
+      photos: Array.isArray(item.photos) ? item.photos : []
+    })),
+    overallRemarks: type.overallRemarks != null ? String(type.overallRemarks) : '',
+    overallPhotos: Array.isArray(type.overallPhotos) ? type.overallPhotos : [],
+    videos: Array.isArray(type.videos) ? type.videos : [],
+    averageRating: type.averageRating != null ? Number(type.averageRating) : 0
+  }));
+}
 
 /**
  * Checklist Service Class
@@ -360,14 +388,14 @@ class ChecklistService {
         // Rating is 0–5 (decimal allowed); no strict match to status
       });
 
-      // Normalize nulls so Mongoose accepts payload (setters may not run on nested create)
+      // Normalize: derive rating from status when rating is null (e.g. "Not Applicable" -> 0). Excellent=5, Good=4, Average=3, Poor=1.
       const normalizedTypes = (inspectionData.types || []).map(type => ({
         typeName: type.typeName,
         checklistItems: (type.checklistItems || []).map(item => ({
           position: item.position,
           label: item.label,
           status: item.status,
-          rating: item.rating != null ? Number(item.rating) : 0,
+          rating: resolveItemRating(item),
           remarks: item.remarks != null ? String(item.remarks) : '',
           photos: Array.isArray(item.photos) ? item.photos : []
         })),
@@ -388,6 +416,11 @@ class ChecklistService {
         checklistTemplateId: inspectionData.checklistTemplateId,
         inspectorId,
         vehicleInfo: inspectionData.vehicleInfo || {},
+        vehicleDetails: inspectionData.vehicleDetails ?? null,
+        serviceWarrantyOverview: inspectionData.serviceWarrantyOverview ?? null,
+        interiorDetails: inspectionData.interiorDetails ?? null,
+        exteriorDetails: inspectionData.exteriorDetails ?? null,
+        damaged_coordinates: inspectionData.damaged_coordinates ?? null,
         types: normalizedTypes,
         status: inspectionStatus,
         inspectionDate: inspectionData.inspectionDate || new Date(),
@@ -397,44 +430,53 @@ class ChecklistService {
       // If linked to an inspection request, set inspectionId and update status if submitting
       if (inspectionData.inspectionRequestId) {
         const InspectionRequest = require('../models/InspectionRequest');
-        const inspectionRequest = await InspectionRequest.findOne({
-          _id: inspectionData.inspectionRequestId,
-          assignedInspectorId: inspectorId,
-          status: { $in: ['assigned', 'in_progress', 'pending'] }
-        });
+        const mongoose = require('mongoose');
+        const requestIdObj = typeof inspectionData.inspectionRequestId === 'string'
+          ? mongoose.Types.ObjectId.createFromHexString(inspectionData.inspectionRequestId)
+          : inspectionData.inspectionRequestId;
+        const inspectorIdObj = (inspectorId && inspectorId.toString) ? inspectorId : mongoose.Types.ObjectId.createFromHexString(String(inspectorId));
 
+        const requestFilter = {
+          _id: requestIdObj,
+          assignedInspectorId: inspectorIdObj,
+          status: { $in: ['assigned', 'in_progress', 'pending'] }
+        };
+
+        const inspectionRequest = await InspectionRequest.findOne(requestFilter);
         if (inspectionRequest) {
-          const previousStatus = inspectionRequest.status;
-          
-          // If inspection is being created with completed/submitted status, mark request as completed
           const isSubmitting = inspectionStatus === 'completed' || inspectionStatus === 'submitted';
+          const previousRequestStatus = inspectionRequest.status;
           
           inspectionRequest.inspectionId = inspection._id;
+          
           if (isSubmitting) {
+            const endTime = new Date();
             inspectionRequest.status = 'completed';
+            inspectionRequest.inspectionEndTime = endTime;
             
-            // Set inspection end time
-            inspectionRequest.inspectionEndTime = new Date();
-            
-            // Calculate time taken if start time exists
             if (inspectionRequest.inspectionStartTime) {
-              const timeDiffMs = inspectionRequest.inspectionEndTime.getTime() - inspectionRequest.inspectionStartTime.getTime();
-              inspectionRequest.timeTaken = Math.round(timeDiffMs / 1000); // Convert to seconds and round
+              inspectionRequest.timeTaken = Math.round(
+                (endTime.getTime() - inspectionRequest.inspectionStartTime.getTime()) / 60000
+              );
             }
           }
+          
           await inspectionRequest.save();
 
           if (isSubmitting) {
             logger.info('Inspection request linked and marked completed', {
-              inspectionRequestId: inspectionData.inspectionRequestId,
+              inspectionRequestId: inspectionRequest.id,
+              requestId: inspectionRequest.requestId,
               inspectionId: inspection.id,
-              previousStatus: previousStatus,
-              endTime: inspectionRequest.inspectionEndTime,
+              previousStatus: previousRequestStatus,
+              newStatus: inspectionRequest.status,
+              inspectionEndTime: inspectionRequest.inspectionEndTime,
               timeTaken: inspectionRequest.timeTaken
             });
           } else {
             logger.info('Inspection request linked to inspection', {
-              inspectionRequestId: inspectionData.inspectionRequestId,
+              inspectionRequestId: inspectionRequest.id,
+              requestId: inspectionRequest.requestId,
               inspectionId: inspection.id,
               currentStatus: inspectionRequest.status
             });
@@ -618,12 +660,26 @@ class ChecklistService {
         throw new NotFoundError('Inspection not found');
       }
 
-      // Only inspector who created it or admin can view
-      if (currentUser.role !== 'admin' && inspection.inspectorId._id.toString() !== currentUser.id) {
-        throw new ForbiddenError('You do not have permission to view this inspection');
+      // Admin can view any inspection
+      if (currentUser.role === USER_ROLES.ADMIN) {
+        return inspection;
+      }
+      // Inspector can view if they created it
+      if (currentUser.role === USER_ROLES.INSPECTOR && inspection.inspectorId._id.toString() === currentUser.id) {
+        return inspection;
+      }
+      // User (customer) can view if this inspection is linked to their inspection request
+      if (currentUser.role === USER_ROLES.USER) {
+        const request = await InspectionRequest.findOne({
+          inspectionId: inspectionId,
+          userId: currentUser.id
+        }).lean();
+        if (request) {
+          return inspection;
+        }
       }
 
-      return inspection;
+      throw new ForbiddenError('You do not have permission to view this inspection');
     } catch (error) {
       logger.error('Error fetching inspection', error, { inspectionId });
       
@@ -777,16 +833,15 @@ class ChecklistService {
 
       // Track if status is changing to completed/submitted
       const previousStatus = inspection.status;
-      const isSubmitting = updateData.status && 
-        (updateData.status === 'completed' || updateData.status === 'submitted') &&
-        previousStatus !== updateData.status;
+      const newStatus = updateData.status !== undefined ? updateData.status : inspection.status;
+      const isSubmitting = (newStatus === 'completed' || newStatus === 'submitted');
 
       // Update fields
       if (updateData.vehicleInfo !== undefined) {
         inspection.vehicleInfo = { ...inspection.vehicleInfo, ...updateData.vehicleInfo };
       }
       if (updateData.types !== undefined) {
-        inspection.types = updateData.types;
+        inspection.types = normalizeTypesRatings(updateData.types);
       }
       if (updateData.status !== undefined) {
         inspection.status = updateData.status;
@@ -794,29 +849,75 @@ class ChecklistService {
       if (updateData.notes !== undefined) {
         inspection.notes = updateData.notes;
       }
+      if (updateData.vehicleDetails !== undefined) {
+        inspection.vehicleDetails = updateData.vehicleDetails;
+      }
+      if (updateData.serviceWarrantyOverview !== undefined) {
+        inspection.serviceWarrantyOverview = updateData.serviceWarrantyOverview;
+      }
+      if (updateData.interiorDetails !== undefined) {
+        inspection.interiorDetails = updateData.interiorDetails;
+      }
+      if (updateData.exteriorDetails !== undefined) {
+        inspection.exteriorDetails = updateData.exteriorDetails;
+      }
+      if (updateData.damaged_coordinates !== undefined) {
+        inspection.damaged_coordinates = updateData.damaged_coordinates;
+      }
 
       await inspection.save(); // Pre-save hook will recalculate ratings
 
-      // If inspection is being submitted, update linked inspection request status to 'completed'
-      if (isSubmitting) {
-        const InspectionRequest = require('../models/InspectionRequest');
-        const inspectionRequest = await InspectionRequest.findOne({
-          inspectionId: inspection._id,
-          assignedInspectorId: currentUser.id,
-          status: { $in: ['assigned', 'in_progress', 'pending'] }
-        });
-
-        if (inspectionRequest) {
-          const previousRequestStatus = inspectionRequest.status;
-          inspectionRequest.status = 'completed';
-          await inspectionRequest.save();
-
-          logger.info('Inspection request status updated to completed', {
-            inspectionRequestId: inspectionRequest.id,
-            inspectionId: inspection.id,
-            previousStatus: previousRequestStatus,
-            inspectionStatus: inspection.status
+      // When inspection is completed/submitted, ALWAYS update linked InspectionRequest
+      // Check actual saved status (not just updateData) to catch any edge cases
+      const finalStatus = inspection.status;
+      const shouldUpdateRequest = finalStatus === 'completed' || finalStatus === 'submitted';
+      
+      if (shouldUpdateRequest) {
+        try {
+          const InspectionRequest = require('../models/InspectionRequest');
+          
+          // Find request by inspectionId - Mongoose handles ObjectId matching automatically
+          const inspectionRequest = await InspectionRequest.findOne({
+            inspectionId: inspection._id
           });
+
+          if (inspectionRequest) {
+            const previousRequestStatus = inspectionRequest.status;
+            const endTime = new Date();
+            inspectionRequest.status = 'completed';
+            inspectionRequest.inspectionEndTime = endTime;
+            
+            if (inspectionRequest.inspectionStartTime) {
+              inspectionRequest.timeTaken = Math.round(
+                (endTime.getTime() - inspectionRequest.inspectionStartTime.getTime()) / 60000
+              );
+            }
+            
+            await inspectionRequest.save();
+
+            logger.info('Inspection request updated to completed', {
+              inspectionRequestId: inspectionRequest.id,
+              requestId: inspectionRequest.requestId,
+              inspectionId: inspection.id,
+              previousStatus: previousRequestStatus,
+              newStatus: inspectionRequest.status,
+              inspectionEndTime: inspectionRequest.inspectionEndTime,
+              timeTaken: inspectionRequest.timeTaken,
+              hadStartTime: !!inspectionRequest.inspectionStartTime
+            });
+          } else {
+            logger.warn('No inspection request found for this inspection', {
+              inspectionId: inspection.id,
+              inspectionIdType: typeof inspection._id,
+              inspectionIdValue: inspection._id?.toString?.()
+            });
+          }
+        } catch (error) {
+          logger.error('Failed to update inspection request when submitting inspection', error, {
+            inspectionId: inspection.id,
+            inspectionStatus: finalStatus
+          });
+          // Don't throw - inspection is saved, request update failure shouldn't block inspection save
         }
       }
 

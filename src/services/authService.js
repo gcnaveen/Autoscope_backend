@@ -56,8 +56,8 @@ class AuthService {
       return { user, token, otpRequired: false, message: 'Login successful' };
     }
 
-    // User role: OTP flow
-    await otpService.issueOtp(email);
+    // User role: OTP flow (normalize email so DB lookup and send match)
+    await otpService.issueOtp(email.toLowerCase());
     const user = await userService.getByEmail(email);
     return {
       user,
@@ -93,7 +93,7 @@ class AuthService {
       throw new BadRequestError('OTP login is not available for this account. Use email and password to sign in.');
     }
 
-    const user = await otpService.verifyOtp(email, otp);
+    const user = await otpService.verifyOtp(email.toLowerCase(), otp);
 
     if (user.status !== 'active') {
       user.status = 'active';

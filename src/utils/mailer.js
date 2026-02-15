@@ -1,31 +1,31 @@
 /**
  * Mailer Utility using Nodemailer
+ * Gmail: use port 587 (STARTTLS) or 465 (SSL). Use an App Password, not account password.
+ * Set SMTP_USER, SMTP_PASSWORD (and optionally SMTP_HOST, SMTP_PORT) in .env or Lambda env.
  */
 const nodemailer = require('nodemailer');
 const logger = require('./logger');
 
-const {
-  SMTP_HOST = process.env.SMTP_HOST,
-  SMTP_PORT = process.env.SMTP_PORT,
-  SMTP_USER = process.env.SMTP_USER,
-  SMTP_PASSWORD = process.env.SMTP_PASSWORD
-} = process.env;
-console.log("SMTP HOST:", process.env.SMTP_HOST);
-console.log("SMTP PORT:", process.env.SMTP_PORT);
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Math.max(0, parseInt(process.env.SMTP_PORT, 10)) || 587;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD;
+const secure = SMTP_PORT === 465;
+
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
-  port: Number(SMTP_PORT),
-  secure: false,
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASSWORD
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
+  port: SMTP_PORT,
+  secure,
+  auth: SMTP_USER && SMTP_PASSWORD ? { user: SMTP_USER, pass: SMTP_PASSWORD } : undefined,
+  tls: { rejectUnauthorized: false }
 });
 
 const sendOtpEmail = async ({ to, otp }) => {
+  if (!SMTP_USER || !SMTP_PASSWORD) {
+    const err = new Error('SMTP not configured: set SMTP_USER and SMTP_PASSWORD (use Gmail App Password with port 587)');
+    logger.error(err.message, { to });
+    throw err;
+  }
   try {
     await transporter.sendMail({
       to,
@@ -42,8 +42,15 @@ const sendOtpEmail = async ({ to, otp }) => {
     logger.info('OTP email sent', { to });
     return true;
   } catch (error) {
-    logger.error('Failed to send OTP email', error, { to });
-    return false;
+    const errDetail = {
+      to,
+      smtpMessage: error.message,
+      smtpCode: error.code,
+      smtpResponse: error.response,
+      smtpCommand: error.command
+    };
+    logger.error('Failed to send OTP email', error, errDetail);
+    throw error;
   }
 };
 

@@ -16,8 +16,12 @@ const generateOtp = () => {
 
 class OtpService {
   async issueOtp(email) {
+    const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : '';
+    if (!normalizedEmail) {
+      throw new UnauthorizedError('Invalid email');
+    }
     try {
-      const user = await User.findOne({ email }).select('+otpCode +otpExpires');
+      const user = await User.findOne({ email: normalizedEmail }).select('+otpCode +otpExpires');
       if (!user) {
         throw new UnauthorizedError('Invalid email');
       }
@@ -30,25 +34,26 @@ class OtpService {
       user.otpVerified = false;
       await user.save();
 
-      const sent = await sendOtpEmail({ to: email, otp });
-      if (!sent) {
-        throw new DatabaseError('Failed to send OTP email');
-      }
+      await sendOtpEmail({ to: normalizedEmail, otp });
 
-      logger.info('OTP issued', { userId: user.id, email });
+      logger.info('OTP issued', { userId: user.id, email: normalizedEmail });
       return { message: 'OTP sent to email', expiresAt: expires };
     } catch (error) {
       if (error instanceof UnauthorizedError || error instanceof BadRequestError || error instanceof DatabaseError) {
         throw error;
       }
-      logger.error('Error issuing OTP', error, { email });
-      throw new DatabaseError('Failed to issue OTP', error);
+      logger.error('Error issuing OTP', { email: normalizedEmail, errMessage: error.message, errCode: error.code, errResponse: error.response });
+      throw new DatabaseError('Failed to send OTP email', error);
     }
   }
 
   async verifyOtp(email, otp) {
+    const normalizedEmail = (email && typeof email === 'string') ? email.toLowerCase().trim() : '';
+    if (!normalizedEmail) {
+      throw new UnauthorizedError('Invalid email');
+    }
     try {
-      const user = await User.findOne({ email }).select('+otpCode +otpExpires');
+      const user = await User.findOne({ email: normalizedEmail }).select('+otpCode +otpExpires');
       if (!user) {
         throw new UnauthorizedError('Invalid email');
       }
@@ -70,13 +75,13 @@ class OtpService {
       user.otpExpires = null;
       await user.save();
 
-      logger.info('OTP verified', { userId: user.id, email });
+      logger.info('OTP verified', { userId: user.id, email: normalizedEmail });
       return user;
     } catch (error) {
       if (error instanceof UnauthorizedError || error instanceof BadRequestError) {
         throw error;
       }
-      logger.error('Error verifying OTP', error, { email });
+      logger.error('Error verifying OTP', error, { email: normalizedEmail });
       throw new DatabaseError('Failed to verify OTP', error);
     }
   }

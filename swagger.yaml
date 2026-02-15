@@ -36,6 +36,10 @@ tags:
     description: Inspection request management
   - name: Admin Dashboard
     description: Admin dashboard statistics
+  - name: Makes
+    description: Vehicle make (brand). Get/Create: Admin, Inspector, User. Update/Delete: Admin only.
+  - name: Models
+    description: Vehicle model. Get/Create: Admin, Inspector, User. Update/Delete: Admin only.
   - name: Contact
     description: Contact us form (public)
   - name: Upload
@@ -219,6 +223,82 @@ paths:
   # ============================================
   # Upload – S3 presigned & multipart (bucket: autoscopedev, folders by type)
   # ============================================
+  /api/upload/simple-image:
+    post:
+      tags:
+        - Upload
+      summary: Simple unrestricted image upload (Inspector or Admin)
+      description: |
+        Returns a presigned **PUT** URL and **fileUrl** for uploading images without any conditions.
+        No inspectionId, typeName, or other requirements needed.
+        S3 path: `uploads/images/{uuid}-{fileName}`.
+        Client PUTs image to uploadUrl, then uses fileUrl.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fileName
+                - contentType
+              properties:
+                fileName:
+                  type: string
+                  description: Original file name (max 255 chars)
+                  example: "profile-photo.jpg"
+                contentType:
+                  type: string
+                  enum: [image/jpeg, image/jpg, image/png, image/gif, image/webp]
+                  description: Image MIME type
+                  example: "image/jpeg"
+                expiresIn:
+                  type: integer
+                  minimum: 60
+                  maximum: 3600
+                  default: 3600
+                  description: URL expiry in seconds (default 1 hour)
+                  example: 3600
+      responses:
+        '200':
+          description: Presigned URL generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Presigned URL generated for simple image upload. Upload with PUT to uploadUrl, then use fileUrl."
+                  data:
+                    type: object
+                    properties:
+                      uploadUrl:
+                        type: string
+                        description: Presigned PUT URL (expires in expiresIn seconds)
+                        example: "https://autoscopedev.s3.ap-south-1.amazonaws.com/uploads/images/..."
+                      fileUrl:
+                        type: string
+                        description: Public URL to use after upload
+                        example: "https://autoscopedev.s3.ap-south-1.amazonaws.com/uploads/images/..."
+                      key:
+                        type: string
+                        description: S3 object key
+                        example: "uploads/images/uuid-filename.jpg"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /api/upload/presigned-url:
     post:
       tags:
@@ -767,7 +847,7 @@ paths:
         **Payload structure:** Each item in `types` represents one inspection type (e.g. Exterior, Engine).
         - **typeName** – The inspection type (must match template type names).
         - **checklistItems** – The checklist items for that type (position, label, status, rating, remarks, photos).
-        All template types must be present. Item counts per type must match the template. `remarks`, `overallRemarks`, and `notes` may be null (stored as empty string). Rating is 0–5 (decimals allowed). Status may include "Fair" and "Not Checked".
+        All template types must be present. Item counts per type must match the template. `remarks`, `overallRemarks`, and `notes` may be null (stored as empty string). **Status** may be Excellent, Good, Average, Poor, Fair, Not Checked, or **Not Applicable**. **Rating** is optional (nullable); when omitted or null it is derived from status: Excellent=5, Good=4, Average=3, Poor=1, Fair=2.5, Not Checked/Not Applicable=0. Items with status Not Applicable or Not Checked are excluded from type average.
       requestBody:
         required: true
         content:
@@ -1357,6 +1437,397 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  # ============================================
+  # Make Management Endpoints
+  # ============================================
+  /api/admin/makes:
+    post:
+      tags:
+        - Makes
+      summary: Create a new make
+      description: Create a new vehicle make (brand). Admin, Inspector, or User.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  example: Toyota
+                  description: Make name (brand name)
+      responses:
+        '201':
+          description: Make created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MakeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Make already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Makes
+      summary: Get all makes
+      description: Retrieve all vehicle makes with models. Public – no authentication required.
+      security: []
+      parameters:
+        - name: isActive
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+            default: true
+        - name: includeModels
+          in: query
+          description: Include associated models in response
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Makes retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Makes retrieved successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Make'
+
+  /api/admin/makes/{id}:
+    get:
+      tags:
+        - Makes
+      summary: Get make by ID
+      description: Retrieve a specific make by ID with models. Public – no authentication required.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/MakeId'
+        - name: includeModels
+          in: query
+          description: Include associated models in response
+          schema:
+            type: boolean
+            default: false
+        - name: isActive
+          in: query
+          description: Filter models by active status (when includeModels=true)
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Make retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MakeResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Makes
+      summary: Update make
+      description: Update make name or active status. Admin only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MakeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  example: Toyota
+                isActive:
+                  type: boolean
+                  example: true
+      responses:
+        '200':
+          description: Make updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MakeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Make name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Makes
+      summary: Delete make
+      description: Delete a make. Use force=true to also delete associated models. Admin only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MakeId'
+        - name: force
+          in: query
+          description: If true, also deletes all associated models
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Make deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Make deleted successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================
+  # Model Management Endpoints
+  # ============================================
+  /api/admin/models:
+    post:
+      tags:
+        - Models
+      summary: Create a new model
+      description: Create a new vehicle model associated with a make. Admin, Inspector, or User.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - makeId
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  example: Camry
+                  description: Model name
+                makeId:
+                  type: string
+                  example: "507f1f77bcf86cd799439011"
+                  description: ID of the associated make
+      responses:
+        '201':
+          description: Model created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Make not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Model already exists for this make
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - Models
+      summary: Get all models
+      description: Retrieve all vehicle models. Optionally filter by make. Public – no authentication required.
+      security: []
+      parameters:
+        - name: makeId
+          in: query
+          description: Filter by make ID
+          schema:
+            type: string
+        - name: isActive
+          in: query
+          description: Filter by active status
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: Models retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Models retrieved successfully
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /api/admin/models/{id}:
+    get:
+      tags:
+        - Models
+      summary: Get model by ID
+      description: Retrieve a specific model by ID. Public – no authentication required.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Model retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Models
+      summary: Update model
+      description: Update model name, make association, or active status. Admin only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 50
+                  example: Camry
+                makeId:
+                  type: string
+                  example: "507f1f77bcf86cd799439011"
+                  description: ID of the associated make
+                isActive:
+                  type: boolean
+                  example: true
+      responses:
+        '200':
+          description: Model updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Model already exists for this make
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Models
+      summary: Delete model
+      description: Delete a model. Admin only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Model deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Model deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1439,6 +1910,22 @@ components:
       in: path
       required: true
       description: Inspection Request ID
+      schema:
+        type: string
+
+    MakeId:
+      name: id
+      in: path
+      required: true
+      description: Make ID
+      schema:
+        type: string
+
+    ModelId:
+      name: id
+      in: path
+      required: true
+      description: Model ID
       schema:
         type: string
 
@@ -2471,8 +2958,7 @@ components:
         - position
         - label
         - status
-        - rating
-      description: A single checklist item within an inspection type (e.g. "Front Windshield Glass" under Exterior).
+      description: A single checklist item within an inspection type (e.g. "Front Windshield Glass" under Exterior). When status is Not Applicable or Not Checked, rating may be null and is derived server-side (0); these items are excluded from type average.
       properties:
         position:
           type: integer
@@ -2483,13 +2969,15 @@ components:
           example: Front Windshield Glass
         status:
           type: string
-          enum: [Excellent, Good, Average, Poor, Fair, "Not Checked"]
+          enum: [Excellent, Good, Average, Poor, Fair, "Not Checked", "Not Applicable"]
+          description: Not Applicable and Not Checked are excluded from type average; rating may be null for these.
           example: Excellent
         rating:
           type: number
           minimum: 0
           maximum: 5
-          description: Numeric rating 0–5 (decimals allowed, e.g. 3.5, 4.5)
+          nullable: true
+          description: Optional. 0–5 (decimals allowed). If null/omitted, derived from status (Excellent=5, Good=4, Average=3, Poor=1, Fair=2.5, Not Checked/Not Applicable=0).
           example: 4
         remarks:
           type: string
@@ -2544,7 +3032,7 @@ components:
           format: float
           minimum: 0
           maximum: 5
-          description: Computed from checklist item ratings; may be sent by client or recalculated on save.
+          description: Computed from checklist item ratings (items with status Not Applicable or Not Checked are excluded). May be sent by client or recalculated on save.
           example: 3.9
 
     CreateInspectionRequest:
@@ -3086,6 +3574,89 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ErrorDetail'
+
+    Make:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439011"
+        name:
+          type: string
+          example: Toyota
+          description: Make name (uppercase)
+        isActive:
+          type: boolean
+          example: true
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+          description: Associated models (only when includeModels=true)
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    MakeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Make created successfully
+        data:
+          $ref: '#/components/schemas/Make'
+
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "507f1f77bcf86cd799439011"
+        name:
+          type: string
+          example: Camry
+          description: Model name
+        makeId:
+          type: object
+          properties:
+            _id:
+              type: string
+              example: "507f1f77bcf86cd799439011"
+            name:
+              type: string
+              example: Toyota
+          description: Associated make (populated)
+        makeName:
+          type: string
+          example: Toyota
+          description: Make name (when returned from getAllModels)
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ModelResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Model created successfully
+        data:
+          $ref: '#/components/schemas/Model'
 
   responses:
     BadRequest:

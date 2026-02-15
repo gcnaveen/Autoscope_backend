@@ -110,6 +110,7 @@ class UserService {
   async getByEmail(email) {
     try {
       const user = await User.findOne({ email: email.toLowerCase() });
+      console.log('user', user);
       if (!user) {
         throw new UnauthorizedError('Invalid email');
       }

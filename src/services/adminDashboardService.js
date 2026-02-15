@@ -32,6 +32,9 @@ class AdminDashboardService {
         totalInspectorsCount,
         totalTemplatesCount,
         roleCounts,
+        userStatusCounts,
+        inspectorStatusCounts,
+        requestStatusCounts,
         allRequests,
         openRequestsCount,
         recentUsers,
@@ -39,8 +42,8 @@ class AdminDashboardService {
         recentInspections,
         recentTemplates
       ] = await Promise.all([
-        // Count total users (excluding admin)
-        User.countDocuments({ role: { $ne: USER_ROLES.ADMIN } }),
+        // Count total users (only USER role, not inspectors)
+        User.countDocuments({ role: USER_ROLES.USER }),
 
         // Count total inspectors
         User.countDocuments({ role: USER_ROLES.INSPECTOR }),
@@ -51,6 +54,33 @@ class AdminDashboardService {
         // User counts by role (single aggregation)
         User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]).exec(),
 
+        // Users (only USER role) by status: active, inactive, blocked, total
+        User.aggregate([
+          { $match: { role: USER_ROLES.USER } },
+          { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]).exec(),
+
+        // Inspectors by status and busy: active, busy (is_assigned), inactive, blocked, total
+        User.aggregate([
+          { $match: { role: USER_ROLES.INSPECTOR } },
+          {
+            $facet: {
+              byStatus: [
+                { $group: { _id: '$status', count: { $sum: 1 } } }
+              ],
+              busyCount: [
+                { $match: { is_assigned: true } },
+                { $count: 'count' }
+              ]
+            }
+          }
+        ]).exec(),
+
+        // Inspection requests by status: pending, assigned, in_progress, completed, cancelled, total
+        InspectionRequest.aggregate([
+          { $group: { _id: '$status', count: { $sum: 1 } } }
+        ]).exec(),
+
         // Get all inspection requests for statistics
         InspectionRequest.find().lean(),
 
@@ -59,8 +89,8 @@ class AdminDashboardService {
           status: { $in: ['pending', 'assigned', 'in_progress'] }
         }),
 
-        // Recent user registrations (last 24 hours, most recent 10)
-        User.find({ role: { $ne: USER_ROLES.ADMIN }, ...recentFilter })
+        // Recent user registrations (last 24 hours, most recent 10) - only USER role
+        User.find({ role: USER_ROLES.USER, ...recentFilter })
           .select('firstName lastName email role status createdAt')
           .sort({ createdAt: -1 })
           .limit(10)
@@ -189,16 +219,61 @@ class AdminDashboardService {
         user: roleMap[USER_ROLES.USER] ?? 0
       };
 
+      // Users (non-admin) by status: active, inactive, blocked, total
+      const userStatusMap = (userStatusCounts || []).reduce((acc, { _id, count }) => {
+        acc[_id] = count;
+        return acc;
+      }, {});
+      const users_by_status = {
+        active: userStatusMap[USER_STATUS.ACTIVE] ?? 0,
+        inactive: userStatusMap[USER_STATUS.INACTIVE] ?? 0,
+        blocked: userStatusMap[USER_STATUS.BLOCKED] ?? 0,
+        total: totalUsersCount
+      };
+
+      // Inspectors by status: active, busy (is_assigned), inactive, blocked, total
+      const inspectorFacet = (inspectorStatusCounts && inspectorStatusCounts[0]) || {};
+      const byStatus = (inspectorFacet.byStatus || []).reduce((acc, { _id, count }) => {
+        acc[_id] = count;
+        return acc;
+      }, {});
+      const busyCount = (inspectorFacet.busyCount && inspectorFacet.busyCount[0] && inspectorFacet.busyCount[0].count) || 0;
+      const inspectors_by_status = {
+        active: byStatus[USER_STATUS.ACTIVE] ?? 0,
+        busy: busyCount,
+        inactive: byStatus[USER_STATUS.INACTIVE] ?? 0,
+        blocked: byStatus[USER_STATUS.BLOCKED] ?? 0,
+        total: totalInspectorsCount
+      };
+
+      // Inspection requests by status: pending, assigned, in_progress, completed, cancelled, total
+      const requestStatusMap = (requestStatusCounts || []).reduce((acc, { _id, count }) => {
+        acc[_id] = count;
+        return acc;
+      }, {});
+      const totalRequests = allRequests.length;
+      const inspection_requests_by_status = {
+        pending: requestStatusMap.pending ?? 0,
+        assigned: requestStatusMap.assigned ?? 0,
+        in_progress: requestStatusMap.in_progress ?? 0,
+        completed: requestStatusMap.completed ?? 0,
+        cancelled: requestStatusMap.cancelled ?? 0,
+        total: totalRequests
+      };
+
       // Build response in exact format requested
       const response = {
         total_users: totalUsersCount,
         total_inspectors: totalInspectorsCount,
         total_checklist_templates: totalTemplatesCount,
         user_role_stats,
+        users_by_status,
+        inspectors_by_status,
         inspection_requests: {
-          total_requests: allRequests.length,
+          total_requests: totalRequests,
           open_requests: openRequestsCount,
-          latest_requests: latestRequests
+          latest_requests: latestRequests,
+          by_status: inspection_requests_by_status
         },
         recent_activities: formattedActivities
       };

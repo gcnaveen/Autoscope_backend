@@ -139,14 +139,18 @@ async function getPresignedUploadUrl(params, currentUser) {
 
 /**
  * Init multipart upload for large videos. Returns uploadId and key; client then requests part URLs and completes.
+ * Accepts either inspectionRequestId or inspectionId for folder grouping (same as getPresignedUploadUrl).
  */
 async function initMultipartUpload(params, currentUser) {
   assertInspectorOrAdmin(currentUser);
 
-  const { inspectionId, typeName, fileName, contentType } = params;
+  const { typeName, fileName, contentType } = params;
 
-  if (!inspectionId || typeof inspectionId !== 'string' || !inspectionId.trim()) {
-    throw new BadRequestError('inspectionId is required');
+  // Allow either inspectionId or inspectionRequestId for folder grouping (same as presigned PUT)
+  const rawId = (params.inspectionRequestId ?? params.inspectionId ?? '').toString().trim();
+  const folderId = rawId.replace(/\s+/g, '');
+  if (!folderId) {
+    throw new BadRequestError('Either inspectionId or inspectionRequestId is required');
   }
   if (!typeName || typeof typeName !== 'string' || !typeName.trim()) {
     throw new BadRequestError('typeName is required');
@@ -164,14 +168,16 @@ async function initMultipartUpload(params, currentUser) {
   }
   validateTypeName(typeName);
 
-  const key = buildInspectionMediaKey(inspectionId, typeName, 'videos', fileName);
+  const key = buildInspectionMediaKey(folderId, typeName, 'videos', fileName);
   const { uploadId } = await createMultipartUpload(key, normalizedType);
   const fileUrl = getPublicUrl(key);
 
   logger.info('Multipart upload initiated', {
     key,
     uploadId,
-    inspectionId,
+    folderId,
+    inspectionRequestId: params.inspectionRequestId,
+    inspectionId: params.inspectionId,
     typeName,
     userId: currentUser._id || currentUser.id
   });
@@ -292,6 +298,51 @@ async function deleteMedia(params, currentUser) {
   return { deleted: true, key: resolvedKey };
 }
 
+/**
+ * Simple unrestricted image upload - no inspectionId, typeName, or other conditions required
+ * Key: uploads/images/{uuid}-{fileName}
+ * Only images allowed (no videos)
+ */
+async function getSimpleImageUploadUrl(params, currentUser) {
+  assertInspectorOrAdmin(currentUser);
+
+  const { fileName, contentType, expiresIn } = params;
+
+  if (!fileName || typeof fileName !== 'string' || !fileName.trim()) {
+    throw new BadRequestError('fileName is required');
+  }
+  if (!contentType || typeof contentType !== 'string' || !contentType.trim()) {
+    throw new BadRequestError('contentType is required');
+  }
+
+  const normalizedType = validateContentType(contentType);
+  
+  // Only allow images for simple upload
+  if (!ALLOWED_IMAGE_TYPES.includes(normalizedType)) {
+    throw new BadRequestError(`Only image types are allowed: ${ALLOWED_IMAGE_TYPES.join(', ')}`);
+  }
+
+  // Build simple key: uploads/images/{uuid}-{fileName}
+  const { randomUUID } = require('crypto');
+  const { sanitizeFileName } = require('../utils/s3');
+  const safeName = sanitizeFileName(fileName);
+  const key = `uploads/images/${randomUUID()}-${safeName}`;
+
+  const expires = Math.min(Math.max(parseInt(expiresIn, 10) || DEFAULT_EXPIRES_IN_SECONDS, 60), 3600);
+  // Same as presigned-url: no ACL so upload works with S3 Block Public Access enabled
+  const uploadUrl = await getPresignedPutUrl(key, normalizedType, expires);
+  const fileUrl = getPublicUrl(key);
+
+  logger.info('Simple image upload URL issued', {
+    key,
+    fileName,
+    contentType: normalizedType,
+    userId: currentUser._id || currentUser.id
+  });
+
+  return { uploadUrl, fileUrl, key };
+}
+
 module.exports = {
   getPresignedUploadUrl,
   initMultipartUpload,
@@ -299,6 +350,7 @@ module.exports = {
   completeMultipart,
   abortMultipart,
   deleteMedia,
+  getSimpleImageUploadUrl,
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,
   ALLOWED_CONTENT_TYPES,

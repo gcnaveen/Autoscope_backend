@@ -116,8 +116,12 @@ function buildUploadKey(folder, fileName) {
 
 /**
  * Presigned PUT URL for single upload (photos or small videos)
+ * @param {string} key - S3 object key
+ * @param {string} contentType - MIME type
+ * @param {number} [expiresIn] - URL expiry in seconds
+ * @param {Object} [options] - Optional: { acl: 'public-read' } to make object publicly readable after upload
  */
-async function getPresignedPutUrl(key, contentType, expiresIn = DEFAULT_EXPIRES_IN_SECONDS) {
+async function getPresignedPutUrl(key, contentType, expiresIn = DEFAULT_EXPIRES_IN_SECONDS, options = {}) {
   try {
     // Normalize key to prevent signature mismatch errors
     const normalizedKey = normalizeKey(key);
@@ -127,11 +131,15 @@ async function getPresignedPutUrl(key, contentType, expiresIn = DEFAULT_EXPIRES_
     }
     
     const client = getS3Client();
-    const command = new PutObjectCommand({
+    const putParams = {
       Bucket: S3_BUCKET,
       Key: normalizedKey,
       ContentType: contentType || 'application/octet-stream'
-    });
+    };
+    if (options.acl === 'public-read') {
+      putParams.ACL = 'public-read';
+    }
+    const command = new PutObjectCommand(putParams);
     
     const url = await getSignedUrl(client, command, { expiresIn });
     logger.info('Presigned PUT URL generated', { 

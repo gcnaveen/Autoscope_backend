@@ -2,6 +2,7 @@
  * Auth API Router (Single Lambda)
  * Routes auth-related HTTP API events to the correct handler.
  */
+require('dotenv').config();
 
 const { BadRequestError } = require('../utils/errors');
 const asyncHandler = require('../utils/asyncHandler');

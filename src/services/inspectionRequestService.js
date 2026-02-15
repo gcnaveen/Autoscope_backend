@@ -21,23 +21,53 @@ const logger = require('../utils/logger');
  */
 class InspectionRequestService {
   /**
-   * Generate formatted request ID (e.g., Req-001, Req-002)
+   * Generate formatted request ID (e.g., CAM_TOY_001)
+   * Format: first 3 letters of model + "_" + first 3 letters of make + "_" + serial number
    * @param {number} sequence - Sequence number from counter
+   * @param {Object} vehicleInfo - Vehicle information with make and model
    * @returns {string} Formatted request ID
    */
-  _generateRequestId(sequence) {
-    // Format: Req-001, Req-002, ..., Req-999, Req-1000, etc.
-    return `Req-${String(sequence).padStart(3, '0')}`;
+  _generateRequestId(sequence, vehicleInfo = {}) {
+    // Get complete model name (uppercase, remove spaces/special chars, default to UNK)
+    const model = (vehicleInfo.model || 'UNK').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').substring(0, 20) || 'UNK';
+    // Get first 3 letters of make (uppercase, pad if needed)
+    const make = (vehicleInfo.make || 'UNK').toString().toUpperCase().substring(0, 3).padEnd(3, 'X');
+    // Format: MODEL_MAKE_001 (model is full name, make is 3 letters)
+    return `${model}_${make}_${String(sequence).padStart(3, '0')}`;
+  }
+
+  /**
+   * Normalize inspectionId on request(s): ensure inspectionId is the string ID (or null).
+   * When inspectionId was populated, keep status/overallRating in inspectionSummary.
+   * @param {Array<Object>} requests - Request documents (lean, possibly with populated inspectionId)
+   * @returns {Array<Object>} Same array with inspectionId as string and optional inspectionSummary
+   */
+  _normalizeInspectionIdOnRequests(requests) {
+    return requests.map((r) => {
+      const ref = r.inspectionId;
+      const idStr =
+        ref == null ? null : ref._id != null ? String(ref._id) : String(ref);
+      const inspectionSummary =
+        ref && typeof ref === 'object' && (ref._id != null || 'status' in ref)
+          ? { status: ref.status, overallRating: ref.overallRating }
+          : undefined;
+      return {
+        ...r,
+        inspectionId: idStr,
+        ...(inspectionSummary && { inspectionSummary })
+      };
+    });
   }
 
   /**
    * Get next request ID atomically
+   * @param {Object} vehicleInfo - Vehicle information with make and model
    * @returns {Promise<string>} Formatted request ID
    */
-  async _getNextRequestId() {
+  async _getNextRequestId(vehicleInfo = {}) {
     try {
       const sequence = await Counter.getNextSequence('inspectionRequest');
-      return this._generateRequestId(sequence);
+      return this._generateRequestId(sequence, vehicleInfo);
     } catch (error) {
       logger.error('Error generating request ID', error);
       throw new DatabaseError('Failed to generate request ID', error);
@@ -106,8 +136,8 @@ class InspectionRequestService {
         throw new ForbiddenError('Your account has been blocked. Please contact administrator.');
       }
 
-      // Generate sequential request ID atomically
-      const requestId = await this._getNextRequestId();
+      // Generate sequential request ID atomically (format: MODEL_MAKE_001)
+      const requestId = await this._getNextRequestId(requestData.vehicleInfo || {});
 
       // Create inspection request with formatted ID
       let request;
@@ -120,6 +150,7 @@ class InspectionRequestService {
             userId: user.id,
             requestType: requestData.requestType || 'car inspection',
             vehicleInfo: requestData.vehicleInfo,
+            reason: requestData.reason ?? '',
             preferredDate: requestData.preferredDate || null,
             preferredTime: requestData.preferredTime || '',
             location: requestData.location || {},
@@ -133,12 +164,13 @@ class InspectionRequestService {
             retries--;
             if (retries === 0) {
               // Last retry - get a new ID
-              const newRequestId = await this._getNextRequestId();
+              const newRequestId = await this._getNextRequestId(requestData.vehicleInfo || {});
               request = await InspectionRequest.create({
                 requestId: newRequestId,
                 userId: user.id,
                 requestType: requestData.requestType || 'car inspection',
                 vehicleInfo: requestData.vehicleInfo,
+                reason: requestData.reason ?? '',
                 preferredDate: requestData.preferredDate || null,
                 preferredTime: requestData.preferredTime || '',
                 location: requestData.location || {},
@@ -147,7 +179,7 @@ class InspectionRequestService {
               });
             } else {
               // Retry with new ID
-              const newRequestId = await this._getNextRequestId();
+              const newRequestId = await this._getNextRequestId(requestData.vehicleInfo || {});
               requestId = newRequestId;
               continue;
             }
@@ -181,12 +213,13 @@ class InspectionRequestService {
         
         if (existingUser) {
           // Retry request creation with existing user and new request ID
-          const retryRequestId = await this._getNextRequestId();
+          const retryRequestId = await this._getNextRequestId(requestData.vehicleInfo || {});
           const request = await InspectionRequest.create({
             requestId: retryRequestId,
             userId: existingUser.id,
             requestType: requestData.requestType || 'car inspection',
             vehicleInfo: requestData.vehicleInfo,
+            reason: requestData.reason ?? '',
             preferredDate: requestData.preferredDate || null,
             preferredTime: requestData.preferredTime || '',
             location: requestData.location || {},
@@ -257,7 +290,7 @@ class InspectionRequestService {
 
       // Execute queries in parallel
       const skip = (pageNum - 1) * limitNum;
-      const [requests, totalCount] = await Promise.all([
+      const [rawRequests, totalCount] = await Promise.all([
         InspectionRequest.find(filter)
           .populate('userId', 'firstName lastName email phone')
           .populate('assignedInspectorId', 'firstName lastName email')
@@ -270,6 +303,7 @@ class InspectionRequestService {
         InspectionRequest.countDocuments(filter)
       ]);
 
+      const requests = this._normalizeInspectionIdOnRequests(rawRequests);
       const totalPages = Math.ceil(totalCount / limitNum);
       const hasNextPage = pageNum < totalPages;
       const hasPreviousPage = pageNum > 1;
@@ -345,7 +379,7 @@ class InspectionRequestService {
       sort[sortField] = sortOrder === 'ASC' ? 1 : -1;
 
       const skip = (pageNum - 1) * limitNum;
-      const [requests, totalCount] = await Promise.all([
+      const [rawRequests, totalCount] = await Promise.all([
         InspectionRequest.find(filter)
           .populate('userId', 'firstName lastName email phone')
           .populate('assignedInspectorId', 'firstName lastName email')
@@ -358,6 +392,7 @@ class InspectionRequestService {
         InspectionRequest.countDocuments(filter)
       ]);
 
+      const requests = this._normalizeInspectionIdOnRequests(rawRequests);
       const totalPages = Math.ceil(totalCount / limitNum);
 
       logger.info('Assigned requests retrieved for inspector', {
@@ -420,6 +455,12 @@ class InspectionRequestService {
         throw new ForbiddenError('You do not have permission to view this inspection request');
       }
 
+      const ref = request.inspectionId;
+      request.inspectionId =
+        ref == null ? null : ref._id != null ? String(ref._id) : String(ref);
+      if (ref && typeof ref === 'object' && (ref._id != null || 'status' in ref)) {
+        request.inspectionSummary = { status: ref.status, overallRating: ref.overallRating };
+      }
       return request;
     } catch (error) {
       if (error instanceof NotFoundError || error instanceof ForbiddenError) {
@@ -460,7 +501,7 @@ class InspectionRequestService {
         );
       }
 
-      const allowedFields = ['requestType', 'preferredDate', 'preferredTime', 'notes'];
+      const allowedFields = ['requestType', 'preferredDate', 'preferredTime', 'notes', 'reason'];
       for (const key of allowedFields) {
         if (updateData[key] !== undefined) {
           request[key] = updateData[key];
@@ -514,9 +555,8 @@ class InspectionRequestService {
   }
 
   /**
-   * Assign an inspector to an inspection request (admin only)
-   * Request must be pending. Inspector must exist, role=inspector, is_assigned=false.
-   * Updates request: assignedInspectorId, assignedAt, status='assigned'. Updates inspector: is_assigned=true.
+   * Assign or reassign an inspector to an inspection request (admin only)
+   * Allowed for any status (admin can reassign at any time). When reassigning, previous inspector's is_assigned is cleared.
    * @param {string} requestId - Inspection request ID (MongoDB _id)
    * @param {Object} body - { inspectorId }
    * @param {Object} currentUser - Authenticated user (must be admin)
@@ -531,12 +571,6 @@ class InspectionRequestService {
       const request = await InspectionRequest.findById(requestId);
       if (!request) {
         throw new NotFoundError('Inspection request not found');
-      }
-
-      if (request.status !== 'pending') {
-        throw new BadRequestError(
-          `Inspector can only be assigned when request is pending. Current status: ${request.status}`
-        );
       }
 
       const inspectorId = body.inspectorId?.trim();
@@ -554,13 +588,17 @@ class InspectionRequestService {
       if (inspector.status !== USER_STATUS.ACTIVE) {
         throw new BadRequestError('Inspector is not active and cannot be assigned');
       }
-      // if (inspector.is_assigned) {
-      //   throw new BadRequestError('Inspector is already assigned to another request');
-      // }
+
+      const previousInspectorId = request.assignedInspectorId?.toString?.() || request.assignedInspectorId;
+      if (previousInspectorId && previousInspectorId !== inspectorId) {
+        await User.findByIdAndUpdate(previousInspectorId, { is_assigned: false });
+      }
 
       request.assignedInspectorId = inspectorId;
       request.assignedAt = new Date();
-      request.status = 'assigned';
+      if (request.status === 'pending') {
+        request.status = 'assigned';
+      }
       await request.save();
 
       await User.findByIdAndUpdate(inspectorId, { is_assigned: true });

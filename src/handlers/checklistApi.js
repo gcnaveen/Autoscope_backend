@@ -31,6 +31,8 @@ exports.handler = asyncHandler(async (event) => {
 
   switch (routeKey) {
     // Upload: presigned + multipart (bucket: autoscopedev, folders by type)
+    case 'POST /api/upload/simple-image':
+      return checklistHandler.getSimpleImageUploadUrl(event);
     case 'POST /api/upload/presigned-url':
       return checklistHandler.getPresignedUploadUrl(event);
     case 'POST /api/upload/multipart/init':

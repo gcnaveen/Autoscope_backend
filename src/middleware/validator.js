@@ -315,6 +315,11 @@ const schemas = {
         'string.max': 'Color cannot exceed 30 characters'
       })
     }).optional(),
+    vehicleDetails: Joi.object().unknown(true).allow(null).optional(),
+    serviceWarrantyOverview: Joi.object().unknown(true).allow(null).optional(),
+    interiorDetails: Joi.object().unknown(true).allow(null).optional(),
+    exteriorDetails: Joi.object().unknown(true).allow(null).optional(),
+    damaged_coordinates: Joi.object().unknown(true).allow(null).optional(),
     types: Joi.array().items(
       Joi.object({
         typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required().messages({
@@ -335,11 +340,10 @@ const schemas = {
               'any.only': `Status must be one of: ${Object.values(CHECKLIST_STATUS).join(', ')}`,
               'any.required': 'Status is required'
             }),
-            rating: Joi.number().min(0).max(5).required().messages({
+            rating: Joi.number().min(0).max(5).allow(null).optional().messages({
               'number.base': 'Rating must be a number',
               'number.min': 'Rating must be at least 0',
-              'number.max': 'Rating must be at most 5',
-              'any.required': 'Rating is required'
+              'number.max': 'Rating must be at most 5'
             }),
             remarks: Joi.string().max(1000).trim().allow('', null).optional().messages({
               'string.max': 'Remarks cannot exceed 1000 characters'
@@ -385,6 +389,11 @@ const schemas = {
       mileage: Joi.number().min(0).optional(),
       color: Joi.string().max(30).trim().allow('').optional()
     }).optional(),
+    vehicleDetails: Joi.object().unknown(true).allow(null).optional(),
+    serviceWarrantyOverview: Joi.object().unknown(true).allow(null).optional(),
+    interiorDetails: Joi.object().unknown(true).allow(null).optional(),
+    exteriorDetails: Joi.object().unknown(true).allow(null).optional(),
+    damaged_coordinates: Joi.object().unknown(true).allow(null).optional(),
     types: Joi.array().items(
       Joi.object({
         typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required(),
@@ -393,7 +402,7 @@ const schemas = {
             position: Joi.number().integer().min(1).required(),
             label: Joi.string().required(),
             status: Joi.string().valid(...Object.values(CHECKLIST_STATUS)).required(),
-            rating: Joi.number().min(0).max(5).required(),
+            rating: Joi.number().min(0).max(5).allow(null).optional(),
             remarks: Joi.string().max(1000).trim().allow('', null).optional(),
             photos: Joi.array().items(Joi.string()).max(20).optional()
           })
@@ -458,17 +467,17 @@ const schemas = {
         'any.required': 'Vehicle model is required',
         'string.max': 'Model cannot exceed 50 characters'
       }),
-      year: Joi.number().integer().required().min(1900).max(new Date().getFullYear() + 1).messages({
-        'any.required': 'Vehicle year is required',
+      year: Joi.number().integer().min(1900).max(new Date().getFullYear() + 1).allow(null).optional().messages({
         'number.base': 'Year must be a number',
         'number.min': 'Year must be at least 1900',
         'number.max': 'Year cannot be in the future'
       }),
-      vin: Joi.string().max(17).trim().uppercase().allow('').optional(),
-      licensePlate: Joi.string().max(20).trim().uppercase().allow('').optional(),
-      mileage: Joi.number().min(0).optional().default(0),
-      color: Joi.string().max(30).trim().allow('').optional()
+      vin: Joi.string().max(17).trim().uppercase().allow('', null).optional(),
+      licensePlate: Joi.string().max(20).trim().uppercase().allow('', null).optional(),
+      mileage: Joi.number().min(0).allow(null).optional(),
+      color: Joi.string().max(30).trim().allow('', null).optional()
     }).required(),
+    reason: Joi.string().max(1000).trim().allow('', null).optional(),
     preferredDate: Joi.date().optional().allow(null),
     preferredTime: Joi.string().max(20).trim().allow('').optional(),
     location: Joi.object({
@@ -516,16 +525,17 @@ const schemas = {
       model: Joi.string().trim().max(50).optional().messages({
         'string.max': 'Model cannot exceed 50 characters'
       }),
-      year: Joi.number().integer().min(1900).max(new Date().getFullYear() + 1).optional().messages({
+      year: Joi.number().integer().min(1900).max(new Date().getFullYear() + 1).allow(null).optional().messages({
         'number.base': 'Year must be a number',
         'number.min': 'Year must be at least 1900',
         'number.max': 'Year cannot be in the future'
       }),
-      vin: Joi.string().max(17).trim().uppercase().allow('').optional(),
-      licensePlate: Joi.string().max(20).trim().uppercase().allow('').optional(),
-      mileage: Joi.number().min(0).optional(),
-      color: Joi.string().max(30).trim().allow('').optional()
+      vin: Joi.string().max(17).trim().uppercase().allow('', null).optional(),
+      licensePlate: Joi.string().max(20).trim().uppercase().allow('', null).optional(),
+      mileage: Joi.number().min(0).allow(null).optional(),
+      color: Joi.string().max(30).trim().allow('', null).optional()
     }).optional(),
+    reason: Joi.string().max(1000).trim().allow('', null).optional(),
     preferredDate: Joi.date().optional().allow(null),
     preferredTime: Joi.string().max(20).trim().allow('').optional(),
     location: Joi.object({
@@ -560,6 +570,21 @@ const schemas = {
     })
   }),
 
+  // Simple unrestricted image upload – same pattern as presigned-url (no inspectionId/typeName)
+  simpleImageUpload: Joi.object({
+    fileName: Joi.string().min(1).max(255).trim().required().messages({
+      'any.required': 'fileName is required',
+      'string.max': 'fileName cannot exceed 255 characters'
+    }),
+    contentType: Joi.string().min(1).max(100).trim().required().messages({
+      'any.required': 'contentType is required'
+    }),
+    expiresIn: Joi.number().integer().min(60).max(3600).optional().messages({
+      'number.min': 'expiresIn must be at least 60 seconds',
+      'number.max': 'expiresIn cannot exceed 3600 seconds (1 hour)'
+    })
+  }),
+
   // Presigned S3 upload URL – folder by inspection type (Interior, Exterior, Engine, etc.)
   // Allow either inspectionId or inspectionRequestId to support both flows
   presignedUploadUrl: Joi.object({
@@ -589,10 +614,13 @@ const schemas = {
     })
   }).or('inspectionId', 'inspectionRequestId'),
 
-  // Multipart upload init (large videos – 10+ min). Bucket folders by type.
+  // Multipart upload init (large videos – 10+ min). Bucket folders by type. Same as presigned: allow inspectionId or inspectionRequestId.
   multipartUploadInit: Joi.object({
-    inspectionId: Joi.string().min(1).max(50).trim().required().messages({
-      'any.required': 'inspectionId is required'
+    inspectionId: Joi.string().min(1).max(50).trim().optional().messages({
+      'string.max': 'inspectionId cannot exceed 50 characters'
+    }),
+    inspectionRequestId: Joi.string().min(1).max(50).trim().optional().messages({
+      'string.max': 'inspectionRequestId cannot exceed 50 characters'
     }),
     typeName: Joi.string().valid(...Object.values(INSPECTION_TYPES)).required().messages({
       'any.required': 'typeName is required',
@@ -604,7 +632,7 @@ const schemas = {
     contentType: Joi.string().valid('video/mp4', 'video/quicktime', 'video/webm').required().messages({
       'any.required': 'contentType is required for video'
     })
-  }),
+  }).or('inspectionId', 'inspectionRequestId'),
 
   // Presigned URL(s) for multipart part(s)
   multipartPartUrls: Joi.object({
@@ -703,6 +731,44 @@ const schemas = {
     sortOrder: Joi.string().valid('ASC', 'DESC').default('DESC').messages({
       'any.only': 'sortOrder must be ASC or DESC'
     })
+  }),
+
+  // Make management schemas
+  createMake: Joi.object({
+    name: Joi.string().min(1).max(50).trim().required().messages({
+      'any.required': 'Make name is required',
+      'string.min': 'Make name must be at least 1 character',
+      'string.max': 'Make name cannot exceed 50 characters'
+    })
+  }),
+
+  updateMake: Joi.object({
+    name: Joi.string().min(1).max(50).trim().optional().messages({
+      'string.min': 'Make name must be at least 1 character',
+      'string.max': 'Make name cannot exceed 50 characters'
+    }),
+    isActive: Joi.boolean().optional()
+  }),
+
+  // Model management schemas
+  createModel: Joi.object({
+    name: Joi.string().min(1).max(50).trim().required().messages({
+      'any.required': 'Model name is required',
+      'string.min': 'Model name must be at least 1 character',
+      'string.max': 'Model name cannot exceed 50 characters'
+    }),
+    makeId: Joi.string().required().messages({
+      'any.required': 'Make ID is required'
+    })
+  }),
+
+  updateModel: Joi.object({
+    name: Joi.string().min(1).max(50).trim().optional().messages({
+      'string.min': 'Model name must be at least 1 character',
+      'string.max': 'Model name cannot exceed 50 characters'
+    }),
+    makeId: Joi.string().optional(),
+    isActive: Joi.boolean().optional()
   })
 };
 

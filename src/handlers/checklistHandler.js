@@ -24,7 +24,8 @@ const {
   getMultipartPartUrls: getMultipartPartUrlsController,
   completeMultipart: completeMultipartController,
   abortMultipart: abortMultipartController,
-  deleteMedia: deleteMediaController
+  deleteMedia: deleteMediaController,
+  getSimpleImageUploadUrl: getSimpleImageUploadUrlController
 } = require('../controllers/uploadController');
 const { authenticate, authorize } = require('../middleware/auth');
 const { schemas, validate } = require('../middleware/validator');
@@ -44,6 +45,18 @@ const initDB = async () => {
 };
 
 /**
+ * Simple unrestricted image upload - no conditions required
+ * POST /api/upload/simple-image
+ * Body: { fileName, contentType, expiresIn? }
+ */
+exports.getSimpleImageUploadUrl = asyncHandler(async (event) => {
+  await initDB();
+  const { user: currentUser } = await authorize(USER_ROLES.INSPECTOR, USER_ROLES.ADMIN)(event);
+  const params = validate(schemas.simpleImageUpload)(event);
+  return await getSimpleImageUploadUrlController(params, currentUser);
+});
+
+/**
  * Get presigned S3 upload URL – folder by type (Interior, Exterior, Engine, etc.)
  * POST /api/upload/presigned-url
  * Body: { inspectionId, typeName, fileName, contentType, mediaType?, expiresIn? }
@@ -58,6 +71,7 @@ exports.getPresignedUploadUrl = asyncHandler(async (event) => {
 /**
  * Init multipart upload for large videos (10+ min). Folder by type.
  * POST /api/upload/multipart/init
+ * Body: { inspectionId or inspectionRequestId, typeName, fileName, contentType }
  */
 exports.initMultipartUpload = asyncHandler(async (event) => {
   await initDB();

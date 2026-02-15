@@ -5,7 +5,7 @@
  */
 
 const mongoose = require('mongoose');
-const { CHECKLIST_STATUS, VIDEO_ALLOWED_TYPES } = require('../config/constants');
+const { CHECKLIST_STATUS, VIDEO_ALLOWED_TYPES, STATUS_EXCLUDED_FROM_AVERAGE } = require('../config/constants');
 
 // Sub-schema for checklist item response
 const checklistItemResponseSchema = new mongoose.Schema({
@@ -31,7 +31,12 @@ const checklistItemResponseSchema = new mongoose.Schema({
     required: false,
     min: [0, 'Rating must be at least 0'],
     max: [5, 'Rating must be at most 5'],
-    default: 0
+    default: 0,
+    set: function(v) {
+      if (v == null || Number.isNaN(Number(v))) return 0;
+      const n = Number(v);
+      return Math.min(5, Math.max(0, n));
+    }
   },
   remarks: {
     type: String,
@@ -210,6 +215,27 @@ const inspectionSchema = new mongoose.Schema({
     maxlength: [5000, 'Notes cannot exceed 5000 characters'],
     default: '',
     set: function(v) { return v == null ? '' : v; }
+  },
+  // Extended vehicle/details from frontend – stored as sent (make, model, gradeVariant, engineCapacity, modelYear, etc.)
+  vehicleDetails: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  serviceWarrantyOverview: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  interiorDetails: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  exteriorDetails: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
+  damaged_coordinates: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
   }
 }, {
   timestamps: true,
@@ -238,13 +264,20 @@ inspectionSchema.index({ status: 1, createdAt: -1 });
 inspectionSchema.index({ 'vehicleInfo.vin': 1 });
 inspectionSchema.index({ 'vehicleInfo.licensePlate': 1 });
 
-// Pre-save hook to calculate average ratings
+// Pre-save hook to calculate average ratings (exclude Not Applicable / Not Checked from average)
 inspectionSchema.pre('save', function(next) {
-  // Calculate average rating for each type
+  const excludedSet = new Set(STATUS_EXCLUDED_FROM_AVERAGE || []);
   this.types.forEach(typeInspection => {
     if (typeInspection.checklistItems && typeInspection.checklistItems.length > 0) {
-      const totalRating = typeInspection.checklistItems.reduce((sum, item) => sum + item.rating, 0);
-      typeInspection.averageRating = totalRating / typeInspection.checklistItems.length;
+      const included = typeInspection.checklistItems.filter(
+        item => !excludedSet.has(item.status)
+      );
+      if (included.length > 0) {
+        const totalRating = included.reduce((sum, item) => sum + (Number(item.rating) || 0), 0);
+        typeInspection.averageRating = Math.round((totalRating / included.length) * 100) / 100;
+      } else {
+        typeInspection.averageRating = 0;
+      }
     }
   });
 
@@ -259,24 +292,21 @@ inspectionSchema.pre('save', function(next) {
     this.completedAt = new Date();
   }
 
-  // Calculate timeTaken when inspection is completed or submitted
-  if ((this.status === 'completed' || this.status === 'submitted') && this.inspectionStartTime && !this.inspectionEndTime) {
-    this.inspectionEndTime = new Date();
-    // Calculate time taken in seconds
-    const timeDiffMs = this.inspectionEndTime.getTime() - this.inspectionStartTime.getTime();
-    this.timeTaken = Math.round(timeDiffMs / 1000); // Convert to seconds
-  }
-
   next();
 });
 
 // Method to calculate and update ratings (can be called manually if needed)
 inspectionSchema.methods.calculateRatings = function() {
-  // Calculate average rating for each type
+  const excludedSet = new Set(STATUS_EXCLUDED_FROM_AVERAGE || []);
   this.types.forEach(typeInspection => {
     if (typeInspection.checklistItems && typeInspection.checklistItems.length > 0) {
-      const totalRating = typeInspection.checklistItems.reduce((sum, item) => sum + item.rating, 0);
-      typeInspection.averageRating = totalRating / typeInspection.checklistItems.length;
+      const included = typeInspection.checklistItems.filter(item => !excludedSet.has(item.status));
+      if (included.length > 0) {
+        const totalRating = included.reduce((sum, item) => sum + (Number(item.rating) || 0), 0);
+        typeInspection.averageRating = Math.round((totalRating / included.length) * 100) / 100;
+      } else {
+        typeInspection.averageRating = 0;
+      }
     }
   });
 

@@ -16,6 +16,11 @@ provider:
     JWT_EXPIRES_IN: ${env:JWT_EXPIRES_IN, '24h'}
     # S3 bucket for inspection images and videos (use env S3_BUCKET to override)
     S3_BUCKET: ${env:S3_BUCKET, 'autoscopedev'}
+    # SMTP for emails (OTP, etc.)
+    SMTP_HOST: ${env:SMTP_HOST, 'smtp.gmail.com'}
+    SMTP_PORT: ${env:SMTP_PORT, '587'}
+    SMTP_USER: ${env:SMTP_USER, ''}
+    SMTP_PASSWORD: ${env:SMTP_PASSWORD, ''}
     # AWS_REGION is set automatically by Lambda – do not set it here (reserved)
 
   httpApi:
@@ -95,6 +100,10 @@ functions:
   checklistApi:
     handler: src/handlers/checklistApi.handler
     events:
+      # S3 upload: simple unrestricted image upload
+      - httpApi:
+          path: /api/upload/simple-image
+          method: POST
       # S3 upload: presigned (photos/small video) + multipart (large video), folders by type
       - httpApi:
           path: /api/upload/presigned-url
@@ -161,6 +170,46 @@ functions:
       - httpApi:
           path: /api/admin/dashboard
           method: GET
+
+  # Make Management endpoints
+  makeApi:
+    handler: src/handlers/makeApi.handler
+    events:
+      - httpApi:
+          path: /api/admin/makes
+          method: POST
+      - httpApi:
+          path: /api/admin/makes
+          method: GET
+      - httpApi:
+          path: /api/admin/makes/{id}
+          method: GET
+      - httpApi:
+          path: /api/admin/makes/{id}
+          method: PUT
+      - httpApi:
+          path: /api/admin/makes/{id}
+          method: DELETE
+
+  # Model Management endpoints
+  modelApi:
+    handler: src/handlers/modelApi.handler
+    events:
+      - httpApi:
+          path: /api/admin/models
+          method: POST
+      - httpApi:
+          path: /api/admin/models
+          method: GET
+      - httpApi:
+          path: /api/admin/models/{id}
+          method: GET
+      - httpApi:
+          path: /api/admin/models/{id}
+          method: PUT
+      - httpApi:
+          path: /api/admin/models/{id}
+          method: DELETE
 
   # Inspection Request endpoints grouped into ONE lambda
   inspectionRequestApi:
@@ -229,6 +278,7 @@ functions:
           method: OPTIONS
 
 plugins:
+  - serverless-dotenv-plugin
   - serverless-offline
 
 package:

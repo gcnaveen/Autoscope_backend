@@ -44,7 +44,7 @@ const inspectionRequestSchema = new mongoose.Schema({
     },
     year: {
       type: Number,
-      required: [true, 'Vehicle year is required'],
+      default: null,
       min: [1900, 'Year must be at least 1900'],
       max: [new Date().getFullYear() + 1, 'Year cannot be in the future']
     },
@@ -65,7 +65,7 @@ const inspectionRequestSchema = new mongoose.Schema({
     mileage: {
       type: Number,
       min: [0, 'Mileage cannot be negative'],
-      default: 0
+      default: null
     },
     color: {
       type: String,
@@ -73,6 +73,12 @@ const inspectionRequestSchema = new mongoose.Schema({
       maxlength: [30, 'Color cannot exceed 30 characters'],
       default: ''
     }
+  },
+  reason: {
+    type: String,
+    trim: true,
+    maxlength: [1000, 'Reason cannot exceed 1000 characters'],
+    default: ''
   },
   preferredDate: {
     type: Date,
@@ -128,6 +134,7 @@ const inspectionRequestSchema = new mongoose.Schema({
       return value != null ? Math.round(value) : null;
     }
   },
+  /** status: pending | assigned | in_progress | completed | cancelled. Set to completed when linked inspection is submitted. */
   status: {
     type: String,
     enum: ['pending', 'assigned', 'in_progress', 'completed', 'cancelled'],
